@@ -114,13 +114,14 @@ FONTS = {
     "logo":       ("Georgia",   34, "bold"),
 }
 SUBMENUS = {
-    "Dashboard":     ["Visão Geral", "Indicadores", "Relatório Mensal", "Estoque", "Vendas do Mês", "Shaken a Vencer", "Serviços", "Dossiê Cliente", "Dossiê Carro"],
+    "Dashboard":     ["Visão Geral", "Indicadores", "Relatório Mensal", "Relatório Anual", "Estoque", "Vendas do Mês", "Shaken a Vencer", "Serviços", "Dossiê Cliente", "Dossiê Carro"],
     "Cadastros":     ["Clientes", "Carros", "Tipos de Custo", "Tipos de Serviço", "Categoria Desp. Fixas"],
     "Entrada/Compra":["Nova Compra", "Custos", "Despesas Fixas"],
     "Estoque":       ["Veículos", "Peças"],
     "Venda":         ["Nova Venda", "Lucro de Vendas"],
-    "Serviço":       ["Ordem de Serviço", "Shaken", "Custo OS", "Custo SK", "Lucro OS", "Lucro SK"],
+    "Serviço":       ["Ordem de Serviço", "Shaken", "Custo OS", "Custo SK", "Lucro OS", "Lucro SK", "Relatório"],
     "Parcelamentos": ["Financiamentos", "Previsão de Recebimento", "Dívidas Clientes"],
+    "Configurações":  ["Geral", "Interface", "IS", "Banco de Dados"],
 }
 
 NAV_ICONS = {
@@ -131,6 +132,7 @@ NAV_ICONS = {
     "Venda":         "◆",
     "Serviço":       "⚙",
     "Parcelamentos": "◎",
+    "Configurações":  "⚙",
 }
 
 
@@ -138,9 +140,28 @@ class KMCars(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("KM Cars — Sistema de Gestão")
+        self.configure(bg=COLORS["bg_main"])
+
+        # ── Aplica escala TK antes de construir qualquer widget ───────────────
+        try:
+            import json, os, sys as _sys
+            base = os.path.dirname(_sys.executable) if getattr(_sys,"frozen",False) else os.path.dirname(os.path.abspath(__file__))
+            cfg_path = os.path.join(base, "kmcars_config.json")
+            with open(cfg_path, encoding="utf-8") as _f:
+                _cfg = json.load(_f)
+            _escala = float(_cfg.get("escala", 1.0))
+        except Exception:
+            _escala = 1.0
+        # tk scaling: valor padrão do sistema é ~1.33 em Windows 96dpi
+        # Ajustamos relativamente ao padrão detectado
+        try:
+            _base_scaling = self.tk.call("tk", "scaling")
+            self.tk.call("tk", "scaling", _base_scaling * _escala)
+        except Exception:
+            pass
+
         self.geometry("1340x820")
         self.minsize(1100, 700)
-        self.configure(bg=COLORS["bg_main"])
 
         self.current_page = tk.StringVar(value="Dashboard")
         self.current_sub  = {page: subs[0] for page, subs in SUBMENUS.items()}
@@ -149,161 +170,9 @@ class KMCars(tk.Tk):
         self._load_ftm_logo()
         self._load_fonts()
         self._build_ui()
+        self._cfg_apply_on_startup()
         self._show_page("Dashboard")
-        self._setup_keybinds()
 
-
-    def _setup_keybinds(self):
-        """Registra atalhos de teclado globais no aplicativo."""
-
-        def _go(page, sub=None):
-            self._show_page(page)
-            if sub:
-                self.after(50, lambda: self._switch_sub(page, sub))
-
-        # ── Navegação entre páginas ──────────────────────────────────────────
-        self.bind_all("<Control-d>",         lambda e: _go("Dashboard"))
-        self.bind_all("<Control-v>",         lambda e: _go("Venda",           "Nova Venda"))
-        self.bind_all("<Control-b>",         lambda e: _go("Entrada/Compra",  "Nova Compra"))
-        self.bind_all("<Control-o>",         lambda e: _go("Serviço",         "Nova OS"))
-        self.bind_all("<Control-Shift-C>",   lambda e: _go("Cadastros",       "Clientes"))
-        self.bind_all("<Control-p>",         lambda e: _go("Parcelamentos",   "Financiamentos"))
-
-        # ── Salvar formulário ativo ───────────────────────────────────────────
-        def _salvar_ativo(event=None):
-            pg = self.current_page.get()
-            sub = self.current_sub.get(pg, "")
-            if pg == "Venda" and sub == "Nova Venda":
-                try: self._salvar_venda()
-                except Exception as e:
-                    logger.error(f"Erro ao salvar venda via Ctrl+S: {e}", exc_info=True)
-            elif pg == "Entrada/Compra" and sub == "Nova Compra":
-                try: self._salvar_compra()
-                except Exception as e:
-                    logger.error(f"Erro ao salvar compra via Ctrl+S: {e}", exc_info=True)
-            elif pg == "Serviço" and sub == "Nova OS":
-                try: self._salvar_servico()
-                except Exception as e:
-                    logger.error(f"Erro ao salvar OS via Ctrl+S: {e}", exc_info=True)
-
-        self.bind_all("<Control-s>", _salvar_ativo)
-
-        # ── Nova OS / Nova Venda / Nova Compra rápido ─────────────────────────
-        self.bind_all("<Control-n>", lambda e: _go(
-            self.current_page.get(),
-            {"Vendas": "Nova Venda", "Entrada/Compra": "Nova Compra",
-             "Serviço": "Nova OS"}.get(self.current_page.get())
-        ))
-
-        # ── Busca global: Ctrl+F ou Ctrl+K ───────────────────────────────────
-        def _focus_search(event=None):
-            try:
-                self._global_search_entry.focus_set()
-                self._global_search_entry.select_range(0, "end")
-            except Exception:
-                pass
-
-        self.bind_all("<Control-f>", _focus_search)
-        self.bind_all("<Control-k>", _focus_search)
-
-        # ── Escape fecha qualquer Toplevel aberto ─────────────────────────────
-        def _esc_handler(event=None):
-            try:
-                focused = self.focus_get()
-                if focused:
-                    top = focused.winfo_toplevel()
-                    if isinstance(top, tk.Toplevel):
-                        top.destroy()
-                        return
-            except Exception:
-                pass
-            # Se nenhum toplevel aberto, limpa busca global
-            try:
-                if self._global_search_var.get() not in ("", "Buscar cliente, carro, OS..."):
-                    self._global_search_var.set("")
-                    self._global_search_entry.delete(0, "end")
-                    self._global_search_entry.insert(0, "Buscar cliente, carro, OS...")
-                    self._global_search_entry.configure(fg=COLORS["text_muted"])
-            except Exception:
-                pass
-
-        self.bind_all("<Escape>", _esc_handler)
-
-        # ── F5 atualiza dados da tela atual ──────────────────────────────────
-        def _refresh_current(event=None):
-            pg  = self.current_page.get()
-            sub = self.current_sub.get(pg, "")
-            refresh_map = {
-                ("Dashboard", "Shaken a Vencer"):    getattr(self, "_sv_refresh",          None),
-                ("Vendas",    "Histórico"):           getattr(self, "_refresh_hist_vendas", None),
-                ("Serviço",   "Serviços"):            getattr(self, "_refresh_tabela_servicos", None),
-                ("Dashboard", "Visão Geral"):         lambda: self._show_page("Dashboard"),
-            }
-            fn = refresh_map.get((pg, sub))
-            if fn:
-                try: fn()
-                except Exception: pass
-
-        self.bind_all("<F5>", _refresh_current)
-
-        # ── F1 exibe lista de atalhos ─────────────────────────────────────────
-        self.bind_all("<F1>", lambda e: self._show_keybind_tooltip())
-
-    # ── Tooltips de atalhos ───────────────────────────────────────────────────
-    def _show_keybind_tooltip(self):
-        """Exibe popup com lista de atalhos disponíveis."""
-        dlg = tk.Toplevel(self)
-        dlg.title("Atalhos de Teclado")
-        dlg.configure(bg=COLORS["bg_card"])
-        dlg.resizable(False, False)
-        dlg.grab_set()
-        dlg.lift()
-        dlg.attributes("-topmost", True)
-        dlg.after(100, lambda: dlg.attributes("-topmost", False))
-        dlg.update_idletasks()
-        w, h = 360, 380
-        x = self.winfo_x() + (self.winfo_width()  - w) // 2
-        y = self.winfo_y() + (self.winfo_height() - h) // 2
-        dlg.geometry(f"{w}x{h}+{x}+{y}")
-
-        tk.Frame(dlg, bg=COLORS["blue"], height=4).pack(fill="x")
-        tk.Label(dlg, text="⌨  Atalhos de Teclado",
-                 font=("Helvetica",12,"bold"),
-                 bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(pady=(14,8))
-        tk.Frame(dlg, bg=COLORS["border"], height=1).pack(fill="x", padx=20, pady=(0,8))
-
-        atalhos = [
-            ("Ctrl + D",        "Ir para Dashboard"),
-            ("Ctrl + V",        "Nova Venda"),
-            ("Ctrl + B",        "Nova Compra"),
-            ("Ctrl + O",        "Nova OS"),
-            ("Ctrl + Shift + C","Cadastros → Clientes"),
-            ("Ctrl + P",        "Parcelamentos"),
-            ("Ctrl + N",        "Novo registro (contexto atual)"),
-            ("Ctrl + S",        "Salvar formulário ativo"),
-            ("Ctrl + F",        "Busca global"),
-            ("Ctrl + K",        "Busca global"),
-            ("Esc",             "Fechar janela / Limpar busca"),
-            ("F5",              "Atualizar tela atual"),
-            ("F1",              "Esta tela de atalhos"),
-        ]
-        for key, desc in atalhos:
-            row = tk.Frame(dlg, bg=COLORS["bg_card"])
-            row.pack(fill="x", padx=20, pady=1)
-            tk.Label(row, text=key, font=("Helvetica",8,"bold"),
-                     bg=COLORS["blue"], fg="white",
-                     width=12, anchor="center", padx=4, pady=2
-                     ).pack(side="left")
-            tk.Label(row, text=desc, font=("Helvetica",9),
-                     bg=COLORS["bg_card"], fg=COLORS["text_primary"],
-                     anchor="w"
-                     ).pack(side="left", padx=(8,0))
-
-        tk.Button(dlg, text="Fechar", font=("Helvetica",9),
-                  bg=COLORS["border"], fg=COLORS["text_secondary"],
-                  relief="flat", cursor="hand2",
-                  command=dlg.destroy
-                  ).pack(pady=(12,14), ipadx=20, ipady=5)
 
     # ── Banco de Dados SQLite ─────────────────────────────────────────────────
     def _init_db(self):
@@ -501,6 +370,7 @@ class KMCars(tk.Tk):
                 "ALTER TABLE carros   ADD COLUMN data_shaken      TEXT",
                 "ALTER TABLE carros   ADD COLUMN historico_status TEXT",
                 "ALTER TABLE vendas   ADD COLUMN parcelas_pagas   INTEGER DEFAULT 0",
+                "ALTER TABLE clientes ADD COLUMN cidade           TEXT    DEFAULT ''",
                 "ALTER TABLE vendas   ADD COLUMN compra_id        INTEGER",
                 "ALTER TABLE vendas   ADD COLUMN lucro            INTEGER",
                 "ALTER TABLE servicos ADD COLUMN os_num           TEXT",
@@ -534,7 +404,108 @@ class KMCars(tk.Tk):
             except Exception as e:
                 logger.error(f"Erro na migração v2: {e}", exc_info=True)
 
-        # ── Próximas migrações: adicionar aqui como v3, v4, etc. ──────────────
+        # ── v2 → v3: NFI (SNF/CNF) e config IS ─────────────────────────────────
+        if version < 3:
+            mig_v3 = [
+                "ALTER TABLE vendas   ADD COLUMN nfi TEXT DEFAULT 'SNF'",
+                "ALTER TABLE servicos ADD COLUMN nfi TEXT DEFAULT 'SNF'",
+                "ALTER TABLE shaken   ADD COLUMN nfi TEXT DEFAULT 'SNF'",
+                "INSERT OR IGNORE INTO configuracoes (chave,valor) VALUES ('is_percentual','10')",
+            ]
+            for sql in mig_v3:
+                try:
+                    self.conn.execute(sql)
+                except Exception as e:
+                    if "duplicate column" not in str(e).lower():
+                        logger.warning(f"Migração v3 ignorada: {e}")
+            self.conn.execute("PRAGMA user_version = 3")
+            self.conn.commit()
+            logger.info("Migração v3 concluída.")
+
+        # ── v3 → v4: IS retroativo para registros CNF já existentes ──────────
+        if version < 4:
+            try:
+                is_perc_mig = 10.0
+                try:
+                    r = self.conn.execute(
+                        "SELECT valor FROM configuracoes WHERE chave='is_percentual'"
+                    ).fetchone()
+                    if r: is_perc_mig = float(r[0])
+                except Exception: pass
+
+                def _ins_is_if_missing(table_name, id_col, val_col, date_col, ref_col):
+                    """Insere IS em table_name para registros CNF sem IS ainda."""
+                    rows = self.conn.execute(
+                        f"SELECT id, {val_col}, {date_col} FROM {ref_col} WHERE nfi='CNF'"
+                    ).fetchall()
+                    for rid, val, dt in rows:
+                        val_int = 0
+                        try: val_int = int(str(val or "0").replace(",",""))
+                        except Exception: pass
+                        if not val_int: continue
+                        # Verifica se IS já existe
+                        chk = self.conn.execute(
+                            f"SELECT COUNT(*) FROM {table_name} WHERE {id_col}=? AND tipo_custo='IS'",
+                            (rid,)).fetchone()
+                        if chk and chk[0] > 0: continue
+                        is_v = int(val_int * is_perc_mig / 100)
+                        if is_v <= 0: continue
+                        self.conn.execute(
+                            f"INSERT INTO {table_name} ({id_col},tipo_custo,descricao,valor,data_custo) "
+                            "VALUES (?,?,?,?,?)",
+                            (rid, "IS", "IS automático CNF", str(is_v), dt or ""))
+
+                # Vendas CNF → custos (via compra_id)
+                vendas_cnf = self.conn.execute(
+                    "SELECT v.id, v.valor_venda, v.data_venda, v.compra_id, v.carro_id "
+                    "FROM vendas v WHERE v.nfi='CNF'"
+                ).fetchall()
+                for vid, val, dt, compra_id, carro_id in vendas_cnf:
+                    val_int = 0
+                    try: val_int = int(str(val or "0").replace(",",""))
+                    except Exception: pass
+                    if not val_int: continue
+                    cid = compra_id
+                    if not cid and carro_id:
+                        cr = self.conn.execute(
+                            "SELECT id FROM compras WHERE carro_id=? ORDER BY id DESC LIMIT 1",
+                            (carro_id,)).fetchone()
+                        cid = cr[0] if cr else None
+                    if not cid: continue
+                    chk = self.conn.execute(
+                        "SELECT COUNT(*) FROM custos WHERE compra_id=? AND tipo_custo='IS'",
+                        (cid,)).fetchone()
+                    if chk and chk[0] > 0: continue
+                    is_v = int(val_int * is_perc_mig / 100)
+                    if is_v <= 0: continue
+                    self.conn.execute(
+                        "INSERT INTO custos (compra_id,tipo_custo,descricao,valor,data_custo) "
+                        "VALUES (?,?,?,?,?)",
+                        (cid, "IS", "IS automático CNF", str(is_v), dt or ""))
+
+                # OS CNF → custos_os
+                _ins_is_if_missing("custos_os", "servico_id", "valor", "data_servico", "servicos")
+
+                # Shaken CNF → custos_sk
+                _ins_is_if_missing("custos_sk", "shaken_id", "valor", "data_registro", "shaken")
+
+                self.conn.execute("PRAGMA user_version = 4")
+                self.conn.commit()
+                logger.info("Migração v4 (IS retroativo CNF) concluída.")
+            except Exception as e:
+                logger.error(f"Erro na migração v4: {e}", exc_info=True)
+
+        # ── v5: data_conclusao em servicos ───────────────────────────────────
+        if version < 5:
+            try:
+                self.conn.execute(
+                    "ALTER TABLE servicos ADD COLUMN data_conclusao TEXT")
+            except Exception:
+                pass  # coluna já existe
+            self.conn.execute("PRAGMA user_version = 5")
+            self.conn.commit()
+
+        # ── Próximas migrações: adicionar aqui como v6, etc. ──────────────────
 
     def _auto_backup(self):
         """Cria backup automático do banco, mantendo os 10 mais recentes."""
@@ -567,39 +538,34 @@ class KMCars(tk.Tk):
 
     # ── Logo FTM ──────────────────────────────────────────────────────────────
     def _load_ftm_logo(self):
+        import os, sys as _sys2, base64, io
+
+        self.ftm_img          = None
+        self.ftm_photo        = None
+        self.ftm_photo_footer = None
+
+        # Logo embutido em base64 (não depende de arquivo externo)
+        FTM_LOGO_B64 = (
+            "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"
+        )
+
         try:
-            data = base64.b64decode(FTM_ICO_B64)
-            self.ftm_img = tk.PhotoImage(data=base64.b64encode(data))
+            from PIL import Image, ImageTk
+            import numpy as np
+            pil_img = Image.open(io.BytesIO(base64.b64decode(FTM_LOGO_B64))).convert("RGBA")
+
+            # Remove fundo preto automaticamente
+            arr = np.array(pil_img)
+            r, g, b = arr[:,:,0], arr[:,:,1], arr[:,:,2]
+            mask = (r < 40) & (g < 40) & (b < 40)
+            arr[mask, 3] = 0
+            pil_img = Image.fromarray(arr)
+
+            self.ftm_photo        = ImageTk.PhotoImage(pil_img.resize((120, 69), Image.LANCZOS))
+            self.ftm_photo_footer = ImageTk.PhotoImage(pil_img.resize((80, 46),  Image.LANCZOS))
         except Exception:
-            self.ftm_img = None
+            pass
 
-        # Tenta carregar do arquivo local também (fallback)
-        try:
-            import os, numpy as np
-            base = os.path.dirname(__file__)
-            png_path = os.path.join(base, "ftm_logo.png")
-            ico_path = os.path.join(base, "ftm_logo.ico")
-            src = png_path if os.path.exists(png_path) else (ico_path if os.path.exists(ico_path) else None)
-
-            if src:
-                from PIL import Image, ImageTk
-                pil_img = Image.open(src).convert("RGBA")
-
-                # Remove fundo preto automaticamente
-                data = np.array(pil_img)
-                r, g, b = data[:,:,0], data[:,:,1], data[:,:,2]
-                mask = (r < 40) & (g < 40) & (b < 40)
-                data[mask, 3] = 0
-                pil_img = Image.fromarray(data)
-
-                self.ftm_photo        = ImageTk.PhotoImage(pil_img.resize((120, 69), Image.LANCZOS))
-                self.ftm_photo_footer = ImageTk.PhotoImage(pil_img.resize((80, 46),  Image.LANCZOS))
-            else:
-                self.ftm_photo        = None
-                self.ftm_photo_footer = None
-        except Exception:
-            self.ftm_photo        = None
-            self.ftm_photo_footer = None
 
     # ── Fonts ─────────────────────────────────────────────────────────────────
     def _load_fonts(self):
@@ -977,6 +943,9 @@ class KMCars(tk.Tk):
         if page == "Parcelamentos":
             self._build_parcelamentos_subs(parent)
             return
+        if page == "Configurações":
+            self._build_configuracoes_subs(parent)
+            return
         if page == "Serviço":
             self._build_servico_subs(parent)
             return
@@ -1080,6 +1049,27 @@ class KMCars(tk.Tk):
                      state="readonly", font=("Helvetica", 8), width=18
                      ).pack(side="left", padx=(4, 0), ipady=2)
         self._venda_filtro_tipo.trace_add("write", lambda *_: self._refresh_tabela_vendas())
+
+        # Filtro NFI
+        fbar3 = tk.Frame(hist_panel, bg=COLORS["bg_main"])
+        fbar3.pack(fill="x", padx=14, pady=(0, 4))
+        tk.Label(fbar3, text="NFI:", font=("Helvetica", 8),
+                 bg=COLORS["bg_main"], fg=COLORS["text_secondary"]).pack(side="left")
+        self._venda_filtro_nfi = tk.StringVar(value="Todos")
+        ttk.Combobox(fbar3, textvariable=self._venda_filtro_nfi,
+                     values=["Todos", "SNF", "CNF"],
+                     state="readonly", font=("Helvetica", 8), width=7
+                     ).pack(side="left", padx=(4, 8), ipady=2)
+        self._venda_filtro_nfi.trace_add("write", lambda *_: self._refresh_tabela_vendas())
+        # Botões PDF e Excel
+        tk.Button(fbar3, text="📄 PDF", font=("Helvetica", 8, "bold"),
+                  bg="#C0392B", fg="white", relief="flat", cursor="hand2",
+                  command=self._exportar_vendas_pdf
+                  ).pack(side="right", padx=(4,0), ipady=3, ipadx=4)
+        tk.Button(fbar3, text="📊 Excel", font=("Helvetica", 8, "bold"),
+                  bg="#1E8449", fg="white", relief="flat", cursor="hand2",
+                  command=self._exportar_vendas_excel
+                  ).pack(side="right", padx=(4,0), ipady=3, ipadx=4)
 
         # Cabeçalho da tabela
         tk.Frame(hist_panel, bg=COLORS["border"], height=1).pack(fill="x", padx=14)
@@ -1283,6 +1273,21 @@ class KMCars(tk.Tk):
         self._venda_taxa_kensa_entry = self._make_yen_entry(self._bloco_leilao, width=20)
         self._venda_taxa_kensa_entry.pack(padx=14, pady=(4, 14), ipady=7)
         # começa oculto
+
+
+        # ── NFI ───────────────────────────────────────────────────────────────
+        tk.Label(fcard, text="NFI",
+                 font=("Helvetica", 9, "bold"),
+                 bg=COLORS["bg_card"], fg=COLORS["text_secondary"]).pack(anchor="w", padx=18)
+        _nfi_f = tk.Frame(fcard, bg=COLORS["bg_card"])
+        _nfi_f.pack(anchor="w", padx=18, pady=(4, 12))
+        self._venda_nfi_var = tk.StringVar(value="SNF")
+        for _lbl, _val in [("SNF", "SNF"), ("CNF", "CNF")]:
+            tk.Radiobutton(_nfi_f, text=_lbl, variable=self._venda_nfi_var, value=_val,
+                           font=("Helvetica", 9),
+                           bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+                           activebackground=COLORS["bg_card"],
+                           selectcolor=COLORS["bg_main"]).pack(anchor="w")
 
         # Status e botões
         self._lbl_venda_status = tk.Label(fcard, text="", font=("Helvetica", 8),
@@ -1562,17 +1567,19 @@ class KMCars(tk.Tk):
             if cr_v:
                 compra_id_venda = cr_v[0]
 
+        nfi_venda = getattr(self, "_venda_nfi_var", None)
+        nfi_venda = nfi_venda.get() if nfi_venda else "SNF"
         dados = (carro_id, carro_nome, cor_sel, placa_sel, cliente_id, tipo,
                  valor_venda, entrada, parcela_mensal, num_parcelas, valor_ultima,
                  data_primeira_parc, data_venda, carro_troca_id, carro_troca,
-                 valor_troca, volta_paga, "", compra_id_venda)
+                 valor_troca, volta_paga, "", compra_id_venda, nfi_venda)
 
         if self._venda_edit_id is not None:
             self.conn.execute("""UPDATE vendas SET
                 carro_id=?,carro=?,cor=?,placa=?,cliente_id=?,tipo_venda=?,
                 valor_venda=?,entrada=?,parcela_mensal=?,num_parcelas=?,valor_ultima_parc=?,
                 data_primeira_parc=?,data_venda=?,carro_troca_id=?,carro_troca=?,
-                valor_troca=?,volta_paga=?,obs=?,compra_id=? WHERE id=?""",
+                valor_troca=?,volta_paga=?,obs=?,compra_id=?,nfi=? WHERE id=?""",
                 dados + (self._venda_edit_id,))
             self.conn.commit()
             self._venda_edit_id = None
@@ -1583,11 +1590,40 @@ class KMCars(tk.Tk):
             cur = self.conn.execute("""INSERT INTO vendas
                 (carro_id,carro,cor,placa,cliente_id,tipo_venda,valor_venda,entrada,
                  parcela_mensal,num_parcelas,valor_ultima_parc,data_primeira_parc,data_venda,
-                 carro_troca_id,carro_troca,valor_troca,volta_paga,obs,compra_id)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", dados)
+                 carro_troca_id,carro_troca,valor_troca,volta_paga,obs,compra_id,nfi)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", dados)
             self.conn.commit()
             vid = cur.lastrowid
             self._lbl_venda_status.configure(text="✔ Venda registrada!", fg=COLORS["green"])
+
+        # IS automático para CNF
+        if nfi_venda == "CNF":
+            try:
+                is_perc = float(self.conn.execute(
+                    "SELECT valor FROM configuracoes WHERE chave='is_percentual'"
+                    ).fetchone()[0] or 10)
+            except Exception:
+                is_perc = 10.0
+            vv_int = int(str(valor_venda or "0").replace(",",""))
+            is_val = int(vv_int * is_perc / 100)
+            if is_val > 0:
+                cid_is = compra_id_venda
+                if not cid_is and carro_id:
+                    cr_is = self.conn.execute(
+                        "SELECT id FROM compras WHERE carro_id=? ORDER BY id DESC LIMIT 1",
+                        (carro_id,)).fetchone()
+                    cid_is = cr_is[0] if cr_is else None
+                if cid_is:
+                    data_is = data_venda or ""
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO tipos_custo (nome) VALUES ('IS')")
+                    self.conn.execute(
+                        "INSERT INTO custos (compra_id,tipo_custo,descricao,valor,data_custo) "
+                        "VALUES (?,?,?,?,?)",
+                        (cid_is, "IS",
+                         "IS automático CNF",
+                         str(is_val), data_is))
+                    self.conn.commit()
 
         # Taxas de Leilão de Venda — gerar custos automáticos
         if tipo == "Venda Leilão":
@@ -1673,6 +1709,7 @@ class KMCars(tk.Tk):
         self._limpar_form_venda(clear_status=False)
         self._refresh_tabela_vendas()
 
+
     def _limpar_form_venda(self, clear_status=True):
         import datetime
         self._venda_carro_var.set("")
@@ -1750,6 +1787,9 @@ class KMCars(tk.Tk):
                 tmatch = next((x for x in tvals if x.startswith(f"{tid} —")), "")
                 self._venda_troca_var.set(tmatch or v.get("carro_troca", ""))
             self._calc_parcelas()
+        # NFI
+        if hasattr(self, "_venda_nfi_var"):
+            self._venda_nfi_var.set(v.get("nfi") or "SNF")
         self._lbl_venda_status.configure(text="")
 
     def _restore_date(self, e_dia, e_mes, e_ano, data_str):
@@ -1860,7 +1900,14 @@ class KMCars(tk.Tk):
         if ftipo != "Todos":
             lista = [v for v in lista if v.get("tipo_venda") == ftipo]
 
+        # Filtro NFI
+        fnfi_v = getattr(self, "_venda_filtro_nfi", None)
+        fnfi_v = fnfi_v.get() if fnfi_v else "Todos"
+        if fnfi_v != "Todos":
+            lista = [v for v in lista if (v.get("nfi") or "SNF") == fnfi_v]
+
         self._lbl_total_vendas.configure(text=f"{len(lista)} registro(s)")
+        self._vendas_lista_filtrada = lista[:]
 
         if not lista:
             tk.Label(self._vendas_rows_frame, text="Nenhuma venda encontrada.",
@@ -1944,6 +1991,13 @@ class KMCars(tk.Tk):
             tk.Label(row, text=st_txt, font=("Helvetica",7,"bold"),
                      bg=st_bg, fg="white", width=8, anchor="center").pack(side="left", padx=2, pady=3)
 
+            # NFI badge
+            nfi_v = v.get("nfi") or "SNF"
+            nfi_bg = "#8E44AD" if nfi_v == "CNF" else "#7F8C8D"
+            tk.Label(row, text=nfi_v, font=("Helvetica",7,"bold"),
+                     bg=nfi_bg, fg="white", width=5, anchor="center"
+                     ).pack(side="left", padx=2, pady=3)
+
             acts = tk.Frame(row, bg=rb)
             acts.pack(side="left", padx=2)
             tk.Button(acts, text="✏", font=("Helvetica",8), bg=COLORS["blue"], fg="white",
@@ -1964,6 +2018,7 @@ class KMCars(tk.Tk):
         self._lucro_filtro_tipo = tk.StringVar(value="Todos")
         self._lucro_filtro_ano  = tk.StringVar(value="Todos")
         self._lucro_filtro_mes  = tk.StringVar(value="Todos")
+        self._lucro_filtro_nfi  = tk.StringVar(value="Todos")
 
         root = tk.Frame(parent, bg=COLORS["bg_content"])
         root.pack(fill="both", expand=True, padx=14, pady=14)
@@ -2040,17 +2095,25 @@ class KMCars(tk.Tk):
                          ).pack(side="left", padx=(0,8), ipady=2)
             var.trace_add("write", lambda *_: self._refresh_lucro())
 
-        tk.Button(fbar, text="↻ Atualizar", font=("Helvetica",8,"bold"),
+        tk.Label(fbar, text="NFI:", font=("Helvetica",8),
+                 bg=COLORS["bg_main"], fg=COLORS["text_secondary"]).pack(side="left", padx=(4,2))
+        ttk.Combobox(fbar, textvariable=self._lucro_filtro_nfi,
+                     values=["Todos","SNF","CNF"],
+                     state="readonly", font=("Helvetica",8), width=6
+                     ).pack(side="left", padx=(0,8), ipady=2)
+        self._lucro_filtro_nfi.trace_add("write", lambda *_: self._refresh_lucro())
+        tk.Button(fbar, text="↺ Atualizar", font=("Helvetica",8,"bold"),
                   bg=COLORS["green"], fg="white", relief="flat", cursor="hand2",
                   padx=8, command=self._refresh_lucro
                   ).pack(side="right", ipady=4)
 
         # ── Tabela com dual-canvas ─────────────────────────────────────────────
         LUCRO_COLS = [
-            ("Data",  80), ("#",    30), ("Carro",    120), ("Ano", 40), ("Cor", 55),
-            ("Placa", 65), ("Cliente",  100),
-            ("T.Compra", 80), ("V.Compra", 80), ("Custos", 75), ("T.Total",  80),
-            ("T.Venda",  80), ("V.Venda",  80), ("Saldo",   75), ("Status",   75),
+            ("Data",   80), ("#",   35), ("Carro",   125), ("Ano", 42), ("Cor", 55),
+            ("Placa",  65), ("Cliente", 100), ("NFI", 42),
+            ("T.Compra", 85), ("V.Compra", 80), ("Custos", 75), ("IS", 65), ("T.Total", 80),
+            ("T.Venda",  80), ("V.Venda",  80), ("Carro Troca", 110), ("V.Troca", 80),
+            ("Saldo",  75), ("Status", 70),
             ("Lucro/Perda", 95), ("Margem", 65),
         ]
         self._lucro_cols = LUCRO_COLS
@@ -2155,12 +2218,16 @@ class KMCars(tk.Tk):
             p = (dv or "").split("/")
             return (p[2] if len(p)>2 else "", p[1] if len(p)>1 else "")
 
+        fnfi_lc = getattr(self, "_lucro_filtro_nfi", None)
+        fnfi_lc = fnfi_lc.get() if fnfi_lc else "Todos"
+
         filtrado = []
         for v in vendas:
             ano_v, mes_v = _ym(v.get("data_venda",""))
             if ftipo != "Todos" and v.get("tipo_venda") != ftipo: continue
             if fmes  != "Todos" and mes_v != fmes:                continue
             if fano  != "Todos" and ano_v != fano:                continue
+            if fnfi_lc != "Todos" and (v.get("nfi") or "SNF") != fnfi_lc: continue
             if termo:
                 hay = " ".join(filter(None, [
                     v.get("carro",""), v.get("c_placa",""), v.get("cli_nome",""),
@@ -2211,6 +2278,17 @@ class KMCars(tk.Tk):
                 custo_total = self._get_custo_total(compra["id"])
                 tipo_compra = compra.get("tipo","—")
 
+            # IS da compra (custo IS em custos)
+            is_compra = 0
+            if compra:
+                try:
+                    ri_is = self.conn.execute(
+                        "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                        "FROM custos WHERE compra_id=? AND tipo_custo='IS'",
+                        (compra["id"],)).fetchone()
+                    is_compra = int(ri_is[0]) if ri_is[0] else 0
+                except Exception: pass
+            custo_sem_is = custo_total - is_compra
             total_compra = v_compra + custo_total
 
             # ── Dados da venda ────────────────────────────────────────────────
@@ -2255,6 +2333,8 @@ class KMCars(tk.Tk):
             if lucro >= 0: cnt_l += 1
             else:          cnt_p += 1
 
+            nfi_lc = v.get("nfi") or "SNF"
+
             # ── Layout da linha ───────────────────────────────────────────────
             rb = COLORS["bg_card"] if i % 2 == 0 else COLORS["bg_content"]
             tk.Frame(self._lucro_rows_frame, bg=COLORS["border"], height=1
@@ -2282,22 +2362,43 @@ class KMCars(tk.Tk):
 
             col = 0
             cell(col, v.get("data_venda") or "—", COLORS["text_secondary"]); col+=1
-            cell(col, f"#{v['id']}",         COLORS["text_muted"]); col+=1
-            cell(col, carro_txt[:18],        COLORS["text_primary"]); col+=1
-            cell(col, v.get("c_ano") or "—", COLORS["text_secondary"]); col+=1
-            cell(col, v.get("c_cor") or "—", COLORS["text_secondary"]); col+=1
-            cell(col, v.get("c_placa") or "—", COLORS["text_secondary"]); col+=1
+            cell(col, f"#{v['id']}",              COLORS["text_muted"]); col+=1
+            cell(col, carro_txt[:18],             COLORS["text_primary"]); col+=1
+            cell(col, v.get("c_ano") or "—",      COLORS["text_secondary"]); col+=1
+            cell(col, v.get("c_cor") or "—",      COLORS["text_secondary"]); col+=1
+            cell(col, v.get("c_placa") or "—",    COLORS["text_secondary"]); col+=1
             cell(col, (v.get("cli_nome") or "—")[:14], COLORS["accent"]); col+=1
+
+            # NFI badge (após cliente)
+            nfi_lc_bg = "#8E44AD" if nfi_lc == "CNF" else "#7F8C8D"
+            f_nfi = tk.Frame(self._lucro_rows_frame, bg=rb)
+            f_nfi.grid(row=ri, column=col, sticky="nsew")
+            tk.Label(f_nfi, text=nfi_lc, font=("Helvetica",7,"bold"),
+                     bg=nfi_lc_bg, fg="white", anchor="center"
+                     ).pack(fill="both", expand=True, padx=3, pady=5)
+            col+=1
 
             # Tipo compra badge
             badge(col, tipo_compra, TIPO_COMP_C.get(tipo_compra, COLORS["text_muted"])); col+=1
             cell(col, self._fmt_yen_display(v_compra), COLORS["orange"]); col+=1
-            cell(col, self._fmt_yen_display(custo_total), COLORS["text_secondary"]); col+=1
+            cell(col, self._fmt_yen_display(custo_sem_is), COLORS["text_secondary"]); col+=1
+            # IS badge
+            is_bg_lv = "#8E44AD" if is_compra > 0 else COLORS["border"]
+            f_is = tk.Frame(self._lucro_rows_frame, bg=rb)
+            f_is.grid(row=ri, column=col, sticky="nsew")
+            tk.Label(f_is, text=self._fmt_yen_display(is_compra) if is_compra else "—",
+                     font=("Helvetica",7,"bold"), bg=is_bg_lv, fg="white", anchor="center"
+                     ).pack(fill="both", expand=True, padx=3, pady=5)
+            col+=1
             cell(col, self._fmt_yen_display(total_compra), COLORS["orange"], bold=True); col+=1
 
             # Tipo venda badge
             badge(col, v.get("tipo_venda","—"), TIPO_VEND_C.get(v.get("tipo_venda",""), COLORS["text_muted"])); col+=1
             cell(col, self._fmt_yen_display(v_venda), COLORS["green"]); col+=1
+            # Carro troca e valor troca
+            carro_troca_txt = (v.get("carro_troca") or "—").split("|")[0].strip()[:16]
+            cell(col, carro_troca_txt, COLORS["blue"]); col+=1
+            cell(col, self._fmt_yen_display(v_troca) if v_troca else "—", COLORS["blue"]); col+=1
             cell(col, self._fmt_yen_display(saldo) if saldo > 0 else "—", COLORS["orange"]); col+=1
 
             # Status badge
@@ -2407,6 +2508,9 @@ class KMCars(tk.Tk):
         tk.Label(hdr, text="◎  Financiamentos Ativos",
                  font=("Helvetica", 12, "bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(hdr, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=self._refresh_financiamentos).pack(side="right", padx=(8,0))
         self._lbl_total_fin = tk.Label(hdr, text="0 registros", font=("Helvetica", 8),
                                         bg=COLORS["bg_card"], fg=COLORS["text_muted"])
         self._lbl_total_fin.pack(side="right")
@@ -2489,7 +2593,7 @@ class KMCars(tk.Tk):
                      state="readonly", font=("Helvetica", 8), width=9
                      ).pack(side="left", padx=(2,0), ipady=2)
         self._fin_filtro_status.trace_add("write", lambda *_: self._refresh_financiamentos())
-        tk.Button(fbar, text="↺", font=("Helvetica", 9, "bold"),
+        tk.Button(fbar, text="↺ Atualizar", font=("Helvetica", 9, "bold"),
                   bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
                   command=self._refresh_financiamentos
                   ).pack(side="right", ipady=3, padx=(0,4))
@@ -3366,6 +3470,9 @@ class KMCars(tk.Tk):
         tbl_h.pack(fill="x", padx=20, pady=(14, 4))
         tk.Label(tbl_h, text="⚙  Tipos Cadastrados", font=("Helvetica", 11, "bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(tbl_h, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=self._refresh_tabela_ts).pack(side="right", padx=(8,0))
         self._lbl_total_ts = tk.Label(tbl_h, text="", font=("Helvetica", 8),
                                        bg=COLORS["bg_card"], fg=COLORS["text_muted"])
         self._lbl_total_ts.pack(side="right")
@@ -3500,6 +3607,8 @@ class KMCars(tk.Tk):
                 self._build_lucro_os(frame)
             elif sub == "Lucro SK":
                 self._build_lucro_sk(frame)
+            elif sub == "Relatório":
+                self._build_relatorio_geral(frame)
         self.sub_pages["Serviço"][SUBMENUS["Serviço"][0]].place(in_=parent, x=0, y=0, relwidth=1, relheight=1)
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -3904,6 +4013,7 @@ class KMCars(tk.Tk):
         self._csk_filtro_var  = tk.StringVar(value="")
         self._csk_filtro_mes  = tk.StringVar(value="Todos")
         self._csk_filtro_ano  = tk.StringVar(value="Todos")
+        self._csk_filtro_tipo = tk.StringVar(value="Todos")
 
         root = tk.Frame(parent, bg=COLORS["bg_content"])
         root.pack(fill="both", expand=True, padx=14, pady=14)
@@ -3955,6 +4065,13 @@ class KMCars(tk.Tk):
                      state="readonly", font=("Helvetica", 8), width=6
                      ).pack(side="left", padx=(2, 0), ipady=2)
         self._csk_filtro_ano.trace_add("write", lambda *_: self._refresh_csk())
+        tk.Label(fbar, text="Tipo:", font=("Helvetica", 8),
+                 bg=COLORS["bg_main"], fg=COLORS["text_secondary"]).pack(side="left", padx=(6,0))
+        ttk.Combobox(fbar, textvariable=self._csk_filtro_tipo,
+                     values=["Todos", "Serviço Shaken", "IS"],
+                     state="readonly", font=("Helvetica", 8), width=14
+                     ).pack(side="left", padx=(2, 0), ipady=2)
+        self._csk_filtro_tipo.trace_add("write", lambda *_: self._refresh_csk())
 
         # Cabeçalho colunas
         tk.Frame(hist, bg=COLORS["border"], height=1).pack(fill="x", padx=14)
@@ -4200,11 +4317,15 @@ class KMCars(tk.Tk):
             p = (dv or "").split("/")
             return (p[2] if len(p)>2 else ""), (p[1] if len(p)>1 else "")
 
+        ftipo_csk = getattr(self, "_csk_filtro_tipo", None)
+        ftipo_csk = ftipo_csk.get() if ftipo_csk else "Todos"
+
         filtered = []
         for r in rows:
             ano_v, mes_v = _ym(r.get("data_custo",""))
             if fmes != "Todos" and mes_v != fmes: continue
             if fano != "Todos" and ano_v != fano: continue
+            if ftipo_csk != "Todos" and r.get("tipo_custo","") != ftipo_csk: continue
             if termo:
                 hay = " ".join(filter(None, [
                     f"#{r.get('id','')}",
@@ -4270,6 +4391,7 @@ class KMCars(tk.Tk):
         self._los_filtro_var = tk.StringVar(value="")
         self._los_filtro_ano = tk.StringVar(value="Todos")
         self._los_filtro_mes = tk.StringVar(value="Todos")
+        self._los_filtro_nfi = tk.StringVar(value="Todos")
 
         root = tk.Frame(parent, bg=COLORS["bg_content"])
         root.pack(fill="both", expand=True, padx=14, pady=14)
@@ -4291,7 +4413,9 @@ class KMCars(tk.Tk):
         self._los_kpi = {}
         for key, label, color in [
             ("total_receita", "Total Receita",  COLORS["blue"]),
-            ("total_custo",   "Total Custos",   COLORS["orange"]),
+            ("total_custo",   "Custo s/IS",     COLORS["orange"]),
+            ("total_is",      "IS (CNF)",        "#8E44AD"),
+            ("custo_total",   "Custo Total",    COLORS["red"]),
             ("lucro_total",   "Lucro Total",    COLORS["green"]),
             ("margem_media",  "Margem Média",   COLORS["blue"]),
             ("qtd_lucro",     "Com Lucro",      COLORS["green"]),
@@ -4337,7 +4461,14 @@ class KMCars(tk.Tk):
                          state="readonly", font=("Helvetica",8), width=5
                          ).pack(side="left", padx=(0,8), ipady=2)
             var.trace_add("write", lambda *_: self._refresh_lucro_os())
-        tk.Button(fbar, text="↻ Atualizar", font=("Helvetica",8,"bold"),
+        tk.Label(fbar, text="NFI:", font=("Helvetica",8),
+                 bg=COLORS["bg_main"], fg=COLORS["text_secondary"]).pack(side="left", padx=(4,2))
+        ttk.Combobox(fbar, textvariable=self._los_filtro_nfi,
+                     values=["Todos","SNF","CNF"],
+                     state="readonly", font=("Helvetica",8), width=6
+                     ).pack(side="left", padx=(0,8), ipady=2)
+        self._los_filtro_nfi.trace_add("write", lambda *_: self._refresh_lucro_os())
+        tk.Button(fbar, text="↺ Atualizar", font=("Helvetica",8,"bold"),
                   bg=COLORS["blue"], fg="white", relief="flat", cursor="hand2",
                   padx=8, command=self._refresh_lucro_os
                   ).pack(side="right", ipady=4)
@@ -4345,8 +4476,9 @@ class KMCars(tk.Tk):
         # ── Tabela dual-canvas ─────────────────────────────────────────────────
         LOS_COLS = [
             ("Data",  80), ("OS",  60), ("Carro", 130), ("Cliente", 110),
-            ("Tipo Serviço", 110),
-            ("Receita", 85), ("Custos OS", 85), ("Lucro/Perda", 95), ("Margem", 70),
+            ("Tipo Serviço", 110), ("NFI", 50),
+            ("Receita", 85), ("Custo s/IS", 85), ("IS", 65),
+            ("C.Total", 85), ("Lucro/Perda", 95), ("Margem", 70),
         ]
         self._los_cols = LOS_COLS
         LOS_W = sum(c[1] for c in LOS_COLS)
@@ -4433,11 +4565,15 @@ class KMCars(tk.Tk):
             p = (dv or "").split("/")
             return (p[2] if len(p)>2 else ""), (p[1] if len(p)>1 else "")
 
+        fnfi_los = getattr(self, "_los_filtro_nfi", None)
+        fnfi_los = fnfi_los.get() if fnfi_los else "Todos"
+
         filtrado = []
         for s in rows:
             ano_v, mes_v = _ym(s.get("data_servico",""))
             if fmes != "Todos" and mes_v != fmes: continue
             if fano != "Todos" and ano_v != fano: continue
+            if fnfi_los != "Todos" and (s.get("nfi") or "SNF") != fnfi_los: continue
             if termo:
                 hay = " ".join(filter(None,[
                     s.get("os_num",""), s.get("carro",""),
@@ -4449,13 +4585,14 @@ class KMCars(tk.Tk):
             try: return int(str(v or "0").replace(",",""))
             except: return 0
 
-        tot_rec = tot_cus = tot_luc = 0
+        tot_rec = tot_cus = tot_luc = tot_is_kpi = 0
         cnt_l = cnt_p = 0
         margens = []
 
         for i, s in enumerate(filtrado):
             receita = _int(s.get("valor"))
             custo_os = 0
+            is_os = 0
             try:
                 row_c = self.conn.execute(
                     "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
@@ -4463,11 +4600,21 @@ class KMCars(tk.Tk):
                 custo_os = int(row_c[0]) if row_c[0] else 0
             except Exception:
                 pass
+            try:
+                row_is = self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM custos_os WHERE servico_id=? AND tipo_custo='IS'",
+                    (s["id"],)).fetchone()
+                is_os = int(row_is[0]) if row_is[0] else 0
+            except Exception:
+                pass
+            custo_sem_is = custo_os - is_os
             lucro  = receita - custo_os
             margem = (lucro / receita * 100) if receita > 0 else 0.0
-            tot_rec += receita
-            tot_cus += custo_os
-            tot_luc += lucro
+            tot_rec    += receita
+            tot_cus    += custo_os - is_os  # sem IS
+            tot_is_kpi += is_os
+            tot_luc    += lucro
             margens.append(margem)
             if lucro >= 0: cnt_l += 1
             else:          cnt_p += 1
@@ -4494,8 +4641,19 @@ class KMCars(tk.Tk):
             cell(col, carro_txt[:18], COLORS["text_primary"]); col+=1
             cell(col, (s.get("cli_nome") or "—")[:14], COLORS["accent"]); col+=1
             cell(col, s.get("tipo_servico") or "—", COLORS["text_secondary"]); col+=1
+            # NFI badge
+            nfi_os_lc = s.get("nfi") or "SNF"
+            nfi_os_bg = "#8E44AD" if nfi_os_lc == "CNF" else "#7F8C8D"
+            f_nfi_os = tk.Frame(self._los_rows_frame, bg=rb)
+            f_nfi_os.grid(row=ri, column=col, sticky="nsew"); col+=1
+            tk.Label(f_nfi_os, text=nfi_os_lc, font=("Helvetica",7,"bold"),
+                     bg=nfi_os_bg, fg="white", anchor="center"
+                     ).pack(fill="both", expand=True, padx=3, pady=5)
             cell(col, self._fmt_yen_display(receita), COLORS["blue"]); col+=1
-            cell(col, self._fmt_yen_display(custo_os), COLORS["orange"]); col+=1
+            cell(col, self._fmt_yen_display(custo_sem_is), COLORS["orange"]); col+=1
+            is_fg = "#8E44AD" if is_os > 0 else COLORS["text_muted"]
+            cell(col, self._fmt_yen_display(is_os) if is_os else "—", is_fg); col+=1
+            cell(col, self._fmt_yen_display(custo_os), COLORS["red"]); col+=1
 
             # Lucro badge
             lucro_bg = COLORS["green"] if lucro >= 0 else COLORS["red"]
@@ -4523,6 +4681,8 @@ class KMCars(tk.Tk):
         lc = COLORS["green"] if tot_luc >= 0 else COLORS["red"]
         self._los_kpi["total_receita"].configure(text=self._fmt_yen_display(tot_rec))
         self._los_kpi["total_custo"].configure(text=self._fmt_yen_display(tot_cus))
+        self._los_kpi["total_is"].configure(text=self._fmt_yen_display(tot_is_kpi))
+        self._los_kpi["custo_total"].configure(text=self._fmt_yen_display(tot_cus + tot_is_kpi))
         self._los_kpi["lucro_total"].configure(text=f"¥ {tot_luc:,}", fg=lc)
         self._los_kpi["margem_media"].configure(
             text=f"{mm:+.1f}%", fg=COLORS["green"] if mm >= 0 else COLORS["red"])
@@ -4541,6 +4701,7 @@ class KMCars(tk.Tk):
         self._lsk_filtro_var = tk.StringVar(value="")
         self._lsk_filtro_ano = tk.StringVar(value="Todos")
         self._lsk_filtro_mes = tk.StringVar(value="Todos")
+        self._lsk_filtro_nfi = tk.StringVar(value="Todos")
 
         root = tk.Frame(parent, bg=COLORS["bg_content"])
         root.pack(fill="both", expand=True, padx=14, pady=14)
@@ -4560,7 +4721,9 @@ class KMCars(tk.Tk):
         self._lsk_kpi = {}
         for key, label, color in [
             ("total_receita", "Total Receita",  "#D4AC0D"),
-            ("total_custo",   "Total Custos",   COLORS["orange"]),
+            ("total_custo",   "Custo s/IS",     COLORS["orange"]),
+            ("is_total",      "IS (CNF)",        "#8E44AD"),
+            ("custo_total",   "Custo Total",    COLORS["red"]),
             ("lucro_total",   "Lucro Total",    COLORS["green"]),
             ("margem_media",  "Margem Média",   "#D4AC0D"),
             ("qtd_lucro",     "Com Lucro",      COLORS["green"]),
@@ -4606,14 +4769,22 @@ class KMCars(tk.Tk):
                          state="readonly", font=("Helvetica",8), width=5
                          ).pack(side="left", padx=(0,8), ipady=2)
             var.trace_add("write", lambda *_: self._refresh_lucro_sk())
-        tk.Button(fbar, text="↻ Atualizar", font=("Helvetica",8,"bold"),
+        tk.Label(fbar, text="NFI:", font=("Helvetica",8),
+                 bg=COLORS["bg_main"], fg=COLORS["text_secondary"]).pack(side="left", padx=(4,2))
+        ttk.Combobox(fbar, textvariable=self._lsk_filtro_nfi,
+                     values=["Todos","SNF","CNF"],
+                     state="readonly", font=("Helvetica",8), width=6
+                     ).pack(side="left", padx=(0,8), ipady=2)
+        self._lsk_filtro_nfi.trace_add("write", lambda *_: self._refresh_lucro_sk())
+        tk.Button(fbar, text="↺ Atualizar", font=("Helvetica",8,"bold"),
                   bg="#D4AC0D", fg="white", relief="flat", cursor="hand2",
                   padx=8, command=self._refresh_lucro_sk
                   ).pack(side="right", ipady=4)
 
         LSK_COLS = [
             ("Data",  80), ("SK",  70), ("Carro", 130), ("Cliente", 110),
-            ("Receita", 85), ("Custos SK", 90),
+            ("NFI", 50), ("Receita", 85), ("Custo s/IS", 85),
+            ("IS", 65), ("C.Total", 85),
             ("Lucro/Perda", 95), ("Margem", 70),
         ]
         self._lsk_cols = LSK_COLS
@@ -4706,12 +4877,16 @@ class KMCars(tk.Tk):
             try: return int(str(v or "0").replace(",","").replace("¥","").strip())
             except: return 0
 
+        fnfi_lsk = getattr(self, "_lsk_filtro_nfi", None)
+        fnfi_lsk = fnfi_lsk.get() if fnfi_lsk else "Todos"
+
         filtrado = []
         for sk in rows:
             if not sk.get("valor"): continue  # só SK com receita registrada
             ano_v, mes_v = _ym(sk.get("data_registro",""))
             if fmes != "Todos" and mes_v != fmes: continue
             if fano != "Todos" and ano_v != fano: continue
+            if fnfi_lsk != "Todos" and (sk.get("nfi") or "SNF") != fnfi_lsk: continue
             if termo:
                 hay = " ".join(filter(None,[
                     sk.get("sk_num",""), sk.get("c_nome",""),
@@ -4719,14 +4894,15 @@ class KMCars(tk.Tk):
                 if termo not in hay: continue
             filtrado.append(sk)
 
-        tot_rec = tot_cus = tot_luc = 0
+        tot_rec = tot_cus = tot_luc = tot_is = 0
         cnt_l = cnt_p = 0
         margens = []
 
         for i, sk in enumerate(filtrado):
             receita = _int(sk.get("valor"))
-            # Custo = somente custos_sk (Clientes: Serviço Shaken; Estoque/Daisha: sem custo SK aqui)
+            # Custo = custos_sk (inclui IS inserido automaticamente)
             extra_sk = 0
+            is_sk_v = 0
             try:
                 row_c = self.conn.execute(
                     "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
@@ -4734,11 +4910,21 @@ class KMCars(tk.Tk):
                 extra_sk = int(row_c[0]) if row_c[0] else 0
             except Exception:
                 pass
+            try:
+                row_is = self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM custos_sk WHERE shaken_id=? AND tipo_custo='IS'",
+                    (sk["id"],)).fetchone()
+                is_sk_v = int(row_is[0]) if row_is[0] else 0
+            except Exception:
+                pass
+            custo_sem_is_sk = extra_sk - is_sk_v
             custo_total = extra_sk
             lucro  = receita - custo_total
             margem = (lucro / receita * 100) if receita > 0 else 0.0
             tot_rec += receita
-            tot_cus += custo_total
+            tot_cus += (custo_total - is_sk_v)   # sem IS
+            tot_is  += is_sk_v
             tot_luc += lucro
             margens.append(margem)
             if lucro >= 0: cnt_l += 1
@@ -4764,8 +4950,19 @@ class KMCars(tk.Tk):
             cell(col, sk.get("sk_num") or f"#{sk['id']}", "#D4AC0D"); col+=1
             cell(col, carro_txt[:18], COLORS["text_primary"]); col+=1
             cell(col, (sk.get("cli_nome") or "—")[:14], COLORS["accent"]); col+=1
+            # NFI badge
+            nfi_sk_lc = sk.get("nfi") or "SNF"
+            nfi_sk_bg = "#8E44AD" if nfi_sk_lc == "CNF" else "#7F8C8D"
+            f_nfi_sk = tk.Frame(self._lsk_rows_frame, bg=rb)
+            f_nfi_sk.grid(row=ri, column=col, sticky="nsew"); col+=1
+            tk.Label(f_nfi_sk, text=nfi_sk_lc, font=("Helvetica",7,"bold"),
+                     bg=nfi_sk_bg, fg="white", anchor="center"
+                     ).pack(fill="both", expand=True, padx=3, pady=5)
             cell(col, self._fmt_yen_display(receita), "#D4AC0D"); col+=1
-            cell(col, self._fmt_yen_display(extra_sk), COLORS["orange"]); col+=1
+            cell(col, self._fmt_yen_display(custo_sem_is_sk), COLORS["orange"]); col+=1
+            is_fg_sk = "#8E44AD" if is_sk_v > 0 else COLORS["text_muted"]
+            cell(col, self._fmt_yen_display(is_sk_v) if is_sk_v else "—", is_fg_sk); col+=1
+            cell(col, self._fmt_yen_display(extra_sk), COLORS["red"]); col+=1
 
             lucro_bg = COLORS["green"] if lucro >= 0 else COLORS["red"]
             fl = tk.Frame(self._lsk_rows_frame, bg=rb)
@@ -4792,6 +4989,8 @@ class KMCars(tk.Tk):
         lc = COLORS["green"] if tot_luc >= 0 else COLORS["red"]
         self._lsk_kpi["total_receita"].configure(text=self._fmt_yen_display(tot_rec))
         self._lsk_kpi["total_custo"].configure(text=self._fmt_yen_display(tot_cus))
+        self._lsk_kpi["is_total"].configure(text=self._fmt_yen_display(tot_is) if tot_is else "—")
+        self._lsk_kpi["custo_total"].configure(text=self._fmt_yen_display(tot_cus + tot_is))
         self._lsk_kpi["lucro_total"].configure(text=f"¥ {tot_luc:,}", fg=lc)
         self._lsk_kpi["margem_media"].configure(
             text=f"{mm:+.1f}%", fg=COLORS["green"] if mm >= 0 else COLORS["red"])
@@ -4799,6 +4998,435 @@ class KMCars(tk.Tk):
         self._lsk_kpi["qtd_prejuizo"].configure(
             text=str(cnt_p), fg=COLORS["red"] if cnt_p > 0 else COLORS["text_muted"])
         self._lsk_lbl_total.configure(text=f"{len(filtrado)} SK exibidos")
+
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # MÓDULO: RELATÓRIO GERAL
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _build_relatorio_geral(self, parent):
+        """Relatório consolidado: Vendas + OS + Shaken por período."""
+        import datetime as _dt
+        self._rel_filtro_mes = tk.StringVar(value="Todos")
+        self._rel_filtro_ano = tk.StringVar(value=str(_dt.date.today().year))
+        self._rel_filtro_nfi = tk.StringVar(value="Todos")
+        self._rel_secao      = tk.StringVar(value="Todos")
+
+        root = tk.Frame(parent, bg=COLORS["bg_content"])
+        root.pack(fill="both", expand=True, padx=16, pady=14)
+
+        # ── Cabeçalho ────────────────────────────────────────────────────────
+        hdr = tk.Frame(root, bg=COLORS["bg_content"])
+        hdr.pack(fill="x", pady=(0, 10))
+        tk.Label(hdr, text="📋  Relatório Geral",
+                 font=("Helvetica", 14, "bold"),
+                 bg=COLORS["bg_content"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(hdr, text="📄 PDF", font=("Helvetica", 9, "bold"),
+                  bg="#C0392B", fg="white", relief="flat", cursor="hand2",
+                  command=self._relatorio_exportar_pdf
+                  ).pack(side="right", ipady=5, ipadx=8)
+        tk.Button(hdr, text="📊 Excel", font=("Helvetica", 9, "bold"),
+                  bg="#1E8449", fg="white", relief="flat", cursor="hand2",
+                  command=self._relatorio_exportar_excel
+                  ).pack(side="right", padx=(0, 8), ipady=5, ipadx=8)
+
+        # ── Filtros ───────────────────────────────────────────────────────────
+        fbar = tk.Frame(root, bg=COLORS["bg_main"],
+                        highlightthickness=1, highlightbackground=COLORS["border"])
+        fbar.pack(fill="x", pady=(0, 10))
+        anos  = [str(y) for y in range(_dt.date.today().year, 2019, -1)]
+        meses = ["Todos","01","02","03","04","05","06","07","08","09","10","11","12"]
+        for lbl_txt, var, opts, w in [
+            ("Mês:",   self._rel_filtro_mes, meses, 5),
+            ("Ano:",   self._rel_filtro_ano, anos,  7),
+            ("NFI:",   self._rel_filtro_nfi, ["Todos","SNF","CNF"], 7),
+            ("Seção:", self._rel_secao,       ["Todos","Vendas","OS","Shaken"], 8),
+        ]:
+            tk.Label(fbar, text=lbl_txt, font=("Helvetica", 8, "bold"),
+                     bg=COLORS["bg_main"], fg=COLORS["text_secondary"]
+                     ).pack(side="left", padx=(10, 3), pady=8)
+            ttk.Combobox(fbar, textvariable=var, values=opts,
+                         state="readonly", font=("Helvetica", 8), width=w
+                         ).pack(side="left", padx=(0, 6), ipady=3)
+            var.trace_add("write", lambda *_: self._relatorio_refresh())
+        tk.Button(fbar, text="↺ Atualizar", font=("Helvetica", 8, "bold"),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  command=self._relatorio_refresh
+                  ).pack(side="right", padx=10, ipady=4)
+
+        # ── KPIs ──────────────────────────────────────────────────────────────
+        kpi_f = tk.Frame(root, bg=COLORS["bg_content"])
+        kpi_f.pack(fill="x", pady=(0, 10))
+        self._rel_kpis = {}
+        for key, label, cor in [
+            ("rec_v",   "Receita Vendas",  COLORS["green"]),
+            ("rec_os",  "Receita OS",      COLORS["blue"]),
+            ("rec_sk",  "Receita Shaken",  "#D4AC0D"),
+            ("rec_tot", "Receita Total",   COLORS["accent"]),
+            ("cus_sem", "Custo s/ IS",     COLORS["orange"]),
+            ("is_tot",  "IS (CNF)",        "#8E44AD"),
+            ("cus_tot", "Custo Total",     COLORS["red"]),
+            ("luc_tot", "Lucro Líquido",   COLORS["green"]),
+        ]:
+            kf = tk.Frame(kpi_f, bg=COLORS["bg_card"],
+                          highlightthickness=1, highlightbackground=COLORS["border"])
+            kf.pack(side="left", expand=True, fill="x", padx=(0, 5))
+            tk.Label(kf, text=label, font=("Helvetica", 7, "bold"),
+                     bg=COLORS["bg_card"], fg=COLORS["text_muted"]).pack(pady=(6, 0))
+            v_lbl = tk.Label(kf, text="—", font=("Helvetica", 10, "bold"),
+                             bg=COLORS["bg_card"], fg=cor)
+            v_lbl.pack(pady=(2, 6))
+            self._rel_kpis[key] = v_lbl
+
+        # ── Tabela ────────────────────────────────────────────────────────────
+        tbl = tk.Frame(root, bg=COLORS["bg_card"],
+                       highlightthickness=1, highlightbackground=COLORS["border"])
+        tbl.pack(fill="both", expand=True)
+        tk.Frame(tbl, bg=COLORS["accent"], height=4).pack(fill="x")
+
+        hdr_f = tk.Frame(tbl, bg=COLORS["bg_main"])
+        hdr_f.pack(fill="x", padx=12, pady=(4, 0))
+        for txt, w in [("Tipo",5),("Data",9),("Ref.",12),("Cliente",14),
+                        ("Carro",14),("NFI",5),("Receita",10),
+                        ("Custo s/IS",10),("IS",9),("C.Total",10),("Lucro",11)]:
+            tk.Label(hdr_f, text=txt, font=("Helvetica", 8, "bold"),
+                     bg=COLORS["bg_main"], fg=COLORS["text_muted"],
+                     width=w, anchor="w").pack(side="left", padx=2, pady=5)
+        tk.Frame(tbl, bg=COLORS["border"], height=1).pack(fill="x", padx=12)
+
+        sf = tk.Frame(tbl, bg=COLORS["bg_card"])
+        sf.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        cv = tk.Canvas(sf, bg=COLORS["bg_card"], highlightthickness=0)
+        sb = tk.Scrollbar(sf, orient="vertical", command=cv.yview)
+        self._rel_rows_frame = tk.Frame(cv, bg=COLORS["bg_card"])
+        self._rel_rows_frame.bind("<Configure>",
+            lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.create_window((0, 0), window=self._rel_rows_frame, anchor="nw")
+        cv.configure(yscrollcommand=sb.set)
+        cv.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        tbl.bind("<Enter>", lambda e: tbl.bind_all("<MouseWheel>",
+            lambda ev: cv.yview_scroll(int(-1*(ev.delta/120)), "units")))
+        tbl.bind("<Leave>", lambda e: tbl.unbind_all("<MouseWheel>"))
+
+        self._relatorio_refresh()
+
+    def _relatorio_refresh(self):
+        """Recarrega dados do relatório conforme filtros."""
+        for w in self._rel_rows_frame.winfo_children():
+            w.destroy()
+
+        fmes = getattr(self, "_rel_filtro_mes", None)
+        fano = getattr(self, "_rel_filtro_ano", None)
+        fnfi = getattr(self, "_rel_filtro_nfi", None)
+        fsec = getattr(self, "_rel_secao",      None)
+        fmes = fmes.get() if fmes else "01"
+        fano = fano.get() if fano else "2024"
+        fnfi = fnfi.get() if fnfi else "Todos"
+        fsec = fsec.get() if fsec else "Todos"
+
+        def _int(v):
+            try: return int(str(v or "0").replace(",", ""))
+            except: return 0
+
+        def _match(data_str):
+            pts = (data_str or "").split("/")
+            m = pts[1] if len(pts)>1 else ""
+            a = pts[2] if len(pts)>2 else ""
+            if fmes != "Todos" and m != fmes: return False
+            if a != fano: return False
+            return True
+
+        items = []  # (tipo, data, ref, cliente, carro, nfi, receita, custo, lucro)
+
+        # ── Vendas ────────────────────────────────────────────────────────────
+        if fsec in ("Todos", "Vendas"):
+            for v in [dict(r) for r in self.conn.execute(
+                    "SELECT v.*, cl.nome as cli_nome FROM vendas v "
+                    "LEFT JOIN clientes cl ON v.cliente_id=cl.id "
+                    "ORDER BY v.id DESC").fetchall()]:
+                if not _match(v.get("data_venda","")): continue
+                nfi_v = v.get("nfi") or "SNF"
+                if fnfi != "Todos" and nfi_v != fnfi: continue
+                rec = _int(v.get("valor_venda"))
+                cus = 0
+                cid = v.get("compra_id")
+                if not cid and v.get("carro_id"):
+                    cr = self.conn.execute(
+                        "SELECT id FROM compras WHERE carro_id=? ORDER BY id DESC LIMIT 1",
+                        (v["carro_id"],)).fetchone()
+                    cid = cr[0] if cr else None
+                is_v_r = 0
+                if cid:
+                    cpr = self.conn.execute(
+                        "SELECT valor FROM compras WHERE id=?", (cid,)).fetchone()
+                    cus += _int(cpr[0]) if cpr else 0
+                    cus += self._get_custo_total(cid)
+                    try:
+                        ri_v = self.conn.execute(
+                            "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                            "FROM custos WHERE compra_id=? AND tipo_custo='IS'",
+                            (cid,)).fetchone()
+                        is_v_r = int(ri_v[0]) if ri_v[0] else 0
+                    except Exception: pass
+                cus_sem_v = cus - is_v_r
+                items.append(("V", v.get("data_venda",""), f"#{v['id']}",
+                               (v.get("cli_nome") or "—"), (v.get("carro") or "—"),
+                               nfi_v, rec, cus_sem_v, is_v_r, rec - cus))
+
+        # ── OS ────────────────────────────────────────────────────────────────
+        if fsec in ("Todos", "OS"):
+            for s in [dict(r) for r in self.conn.execute(
+                    "SELECT s.*, cl.nome as cli_nome FROM servicos s "
+                    "LEFT JOIN clientes cl ON s.cliente_id=cl.id "
+                    "ORDER BY s.id DESC").fetchall()]:
+                if not _match(s.get("data_servico","")): continue
+                nfi_s = s.get("nfi") or "SNF"
+                if fnfi != "Todos" and nfi_s != fnfi: continue
+                rec = _int(s.get("valor"))
+                cus = 0
+                is_os_r = 0
+                try:
+                    r2 = self.conn.execute(
+                        "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                        "FROM custos_os WHERE servico_id=?", (s["id"],)).fetchone()
+                    cus = int(r2[0]) if r2[0] else 0
+                    ri_os = self.conn.execute(
+                        "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                        "FROM custos_os WHERE servico_id=? AND tipo_custo='IS'",
+                        (s["id"],)).fetchone()
+                    is_os_r = int(ri_os[0]) if ri_os[0] else 0
+                except Exception: pass
+                cus_sem_os = cus - is_os_r
+                items.append(("OS", s.get("data_servico",""), s.get("os_num","") or f"#{s['id']}",
+                               (s.get("cli_nome") or "—"), (s.get("carro") or "—"),
+                               nfi_s, rec, cus_sem_os, is_os_r, rec - cus))
+
+        # ── Shaken ────────────────────────────────────────────────────────────
+        if fsec in ("Todos", "Shaken"):
+            for sk in [dict(r) for r in self.conn.execute(
+                    "SELECT sk.*, c.carro as c_nome, cl.nome as cli_nome "
+                    "FROM shaken sk "
+                    "LEFT JOIN carros c ON sk.carro_id=c.id "
+                    "LEFT JOIN clientes cl ON sk.cliente_id=cl.id "
+                    "ORDER BY sk.id DESC").fetchall()]:
+                if not sk.get("valor"): continue
+                if not _match(sk.get("data_registro","")): continue
+                nfi_sk = sk.get("nfi") or "SNF"
+                if fnfi != "Todos" and nfi_sk != fnfi: continue
+                rec = _int(sk.get("valor"))
+                cus = 0
+                try:
+                    r2 = self.conn.execute(
+                        "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                        "FROM custos_sk WHERE shaken_id=?", (sk["id"],)).fetchone()
+                    cus = int(r2[0]) if r2[0] else 0
+                except Exception: pass
+                # IS from custos_sk
+                is_sk_r = 0
+                try:
+                    ri_is2 = self.conn.execute(
+                        "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                        "FROM custos_sk WHERE shaken_id=? AND tipo_custo='IS'",
+                        (sk["id"],)).fetchone()
+                    is_sk_r = int(ri_is2[0]) if ri_is2[0] else 0
+                except Exception: pass
+                cus_sem_r = cus - is_sk_r
+                items.append(("SK", sk.get("data_registro",""), sk.get("sk_num","") or f"#{sk['id']}",
+                               (sk.get("cli_nome") or "—"), (sk.get("c_nome") or "—"),
+                               nfi_sk, rec, cus_sem_r, is_sk_r, rec - cus))
+
+        # ── KPIs ──────────────────────────────────────────────────────────────
+        self._rel_items_cache = items[:]
+        tot_v   = sum(x[6] for x in items if x[0]=="V")
+        tot_os  = sum(x[6] for x in items if x[0]=="OS")
+        tot_sk  = sum(x[6] for x in items if x[0]=="SK")
+        tot_rec = sum(x[6] for x in items)
+        # Todos os items são tuple de 10: (tipo, data, ref, cli, carro, nfi, rec, cus_sem, is_val, lucro)
+        tot_sem = sum(x[7] for x in items)
+        tot_is  = sum(x[8] for x in items)
+        tot_cus = tot_sem + tot_is
+        tot_luc = sum(x[9] for x in items)
+
+        kpis = self._rel_kpis
+        kpis["rec_v"].configure(text=self._fmt_yen_display(tot_v))
+        kpis["rec_os"].configure(text=self._fmt_yen_display(tot_os))
+        kpis["rec_sk"].configure(text=self._fmt_yen_display(tot_sk))
+        kpis["rec_tot"].configure(text=self._fmt_yen_display(tot_rec))
+        kpis["cus_sem"].configure(text=self._fmt_yen_display(tot_sem))
+        kpis["is_tot"].configure(text=self._fmt_yen_display(tot_is))
+        kpis["cus_tot"].configure(text=self._fmt_yen_display(tot_cus))
+        kpis["luc_tot"].configure(
+            text=self._fmt_yen_display(tot_luc),
+            fg=COLORS["green"] if tot_luc >= 0 else COLORS["red"])
+
+        # ── Linhas ────────────────────────────────────────────────────────────
+        if not items:
+            tk.Label(self._rel_rows_frame,
+                     text="Nenhum registro para o período selecionado.",
+                     font=("Helvetica", 10), bg=COLORS["bg_card"],
+                     fg=COLORS["text_muted"]).pack(pady=30)
+            return
+
+        TC = {"V": COLORS["green"], "OS": COLORS["blue"], "SK": "#D4AC0D"}
+        for i, row_data in enumerate(items):
+            tipo, data, ref, cli, carro, nfi_r, rec, cus_sem, is_val, luc = row_data
+            rb = COLORS["bg_card"] if i%2==0 else COLORS["bg_content"]
+            row = tk.Frame(self._rel_rows_frame, bg=rb)
+            row.pack(fill="x")
+            tc = TC.get(tipo, COLORS["text_muted"])
+            tk.Label(row, text=tipo, font=("Helvetica",7,"bold"),
+                     bg=tc, fg="white", width=5, anchor="center"
+                     ).pack(side="left", padx=3, pady=4)
+            for txt, w, fg in [
+                (data,        9,  COLORS["text_secondary"]),
+                (ref[:12],   12,  COLORS["accent"]),
+                (cli[:14],   14,  COLORS["text_primary"]),
+                (carro[:14], 14,  COLORS["text_primary"]),
+            ]:
+                tk.Label(row, text=txt, font=("Helvetica",9),
+                         bg=rb, fg=fg, width=w, anchor="w"
+                         ).pack(side="left", padx=2)
+            nb = "#8E44AD" if nfi_r=="CNF" else "#7F8C8D"
+            tk.Label(row, text=nfi_r, font=("Helvetica",7,"bold"),
+                     bg=nb, fg="white", width=5, anchor="center"
+                     ).pack(side="left", padx=2, pady=3)
+            tk.Label(row, text=self._fmt_yen_display(rec),
+                     font=("Helvetica",9), bg=rb, fg=COLORS["green"],
+                     width=10, anchor="w").pack(side="left", padx=2)
+            tk.Label(row, text=self._fmt_yen_display(cus_sem),
+                     font=("Helvetica",9), bg=rb, fg=COLORS["orange"],
+                     width=10, anchor="w").pack(side="left", padx=2)
+            is_fg = "#8E44AD" if is_val > 0 else COLORS["text_muted"]
+            tk.Label(row, text=self._fmt_yen_display(is_val) if is_val else "—",
+                     font=("Helvetica",9), bg=rb, fg=is_fg,
+                     width=9, anchor="w").pack(side="left", padx=2)
+            tk.Label(row, text=self._fmt_yen_display(cus_sem + is_val),
+                     font=("Helvetica",9,"bold"), bg=rb, fg=COLORS["red"],
+                     width=10, anchor="w").pack(side="left", padx=2)
+            lf = COLORS["green"] if luc>=0 else COLORS["red"]
+            tk.Label(row, text=f"¥{luc:,}",
+                     font=("Helvetica",9,"bold"), bg=rb, fg=lf,
+                     width=11, anchor="w").pack(side="left", padx=2)
+
+    def _relatorio_exportar_pdf(self):
+        items = getattr(self, "_rel_items_cache", [])
+        fmes = getattr(self, "_rel_filtro_mes", None); fmes = fmes.get() if fmes else ""
+        fano = getattr(self, "_rel_filtro_ano", None); fano = fano.get() if fano else ""
+        path = self._get_export_path(f"relatorio_{fano}_{fmes}", "pdf")
+        if not path: return
+        try:
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
+                                             Paragraph, Spacer)
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib import colors as rl_colors
+            from reportlab.lib.units import cm
+        except ImportError:
+            msgbox.showerror("Erro","reportlab não instalado.\nExecute: pip install reportlab")
+            return
+
+        doc = SimpleDocTemplate(path, pagesize=landscape(A4),
+                                leftMargin=1*cm, rightMargin=1*cm,
+                                topMargin=1.5*cm, bottomMargin=1.5*cm)
+        styles = getSampleStyleSheet()
+        story = [
+            Paragraph(f"<b>Relatório Geral — KM Cars — {fmes}/{fano}</b>", styles["Title"]),
+            Spacer(1, 0.4*cm),
+        ]
+        # KPI summary table
+        tot_v   = sum(x[6] for x in items if x[0]=="V")
+        tot_os  = sum(x[6] for x in items if x[0]=="OS")
+        tot_sk  = sum(x[6] for x in items if x[0]=="SK")
+        tot_rec = sum(x[6] for x in items)
+        tot_sem = sum(x[7] for x in items)
+        tot_is  = sum(x[8] for x in items)
+        tot_cus = tot_sem + tot_is
+        tot_luc = sum(x[9] for x in items)
+        cnt_cnf = sum(1 for x in items if x[5]=="CNF")
+        kpi_data = [
+            ["Rec.Vendas","Rec.OS","Rec.Shaken","Rec.Total",
+             "Custo s/IS","IS (CNF)","Custo Total","Lucro","Ops CNF"],
+            [f"¥{tot_v:,}", f"¥{tot_os:,}", f"¥{tot_sk:,}", f"¥{tot_rec:,}",
+             f"¥{tot_sem:,}", f"¥{tot_is:,}", f"¥{tot_cus:,}",
+             f"¥{tot_luc:,}", str(cnt_cnf)],
+        ]
+        t_kpi = Table(kpi_data, colWidths=[2.9*cm]*9)
+        t_kpi.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),"#2C3E50"),
+            ("TEXTCOLOR",(0,0),(-1,0),"white"),
+            ("FONTNAME",(0,0),(-1,-1),"Helvetica-Bold"),
+            ("FONTSIZE",(0,0),(-1,-1),8),
+            ("ALIGN",(0,0),(-1,-1),"CENTER"),
+            ("GRID",(0,0),(-1,-1),0.4,rl_colors.grey),
+            ("TOPPADDING",(0,0),(-1,-1),4),
+            ("BOTTOMPADDING",(0,0),(-1,-1),4),
+        ]))
+        story += [t_kpi, Spacer(1,0.4*cm)]
+
+        headers = ["Tipo","Data","Referência","Cliente","Carro","NFI",
+                   "Receita","Custo s/IS","IS","C.Total","Lucro"]
+        rows = [headers]
+        for tipo, data, ref, cli, carro, nfi_r, rec, cus_sem, is_v, luc in items:
+            rows.append([tipo, data, ref[:14], cli[:16], carro[:16],
+                         nfi_r, f"¥{rec:,}", f"¥{cus_sem:,}", f"¥{is_v:,}",
+                         f"¥{cus_sem+is_v:,}", f"¥{luc:,}"])
+        col_ws = [1.0*cm,2.0*cm,2.2*cm,3.0*cm,3.0*cm,1.0*cm,2.2*cm,2.2*cm,2.0*cm,2.2*cm,2.2*cm]
+        t = Table(rows, colWidths=col_ws, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),"#2C3E50"),
+            ("TEXTCOLOR",(0,0),(-1,0),"white"),
+            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
+            ("FONTSIZE",(0,0),(-1,-1),7),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),["#FFFFFF","#F2F3F4"]),
+            ("GRID",(0,0),(-1,-1),0.3,rl_colors.grey),
+            ("ALIGN",(0,0),(-1,-1),"LEFT"),
+            ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+            ("TOPPADDING",(0,0),(-1,-1),3),
+            ("BOTTOMPADDING",(0,0),(-1,-1),3),
+        ]))
+        story += [t, Spacer(1,0.3*cm),
+                  Paragraph(f"Total: {len(items)} operações | Lucro: ¥{tot_luc:,}",
+                             styles["Normal"])]
+        doc.build(story)
+        msgbox.showinfo("PDF Exportado", f"Arquivo salvo:\n{path}")
+
+    def _relatorio_exportar_excel(self):
+        items = getattr(self, "_rel_items_cache", [])
+        fmes = getattr(self, "_rel_filtro_mes", None); fmes = fmes.get() if fmes else ""
+        fano = getattr(self, "_rel_filtro_ano", None); fano = fano.get() if fano else ""
+        path = self._get_export_path(f"relatorio_{fano}_{fmes}", "xlsx")
+        if not path: return
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment
+        except ImportError:
+            msgbox.showerror("Erro","openpyxl não instalado.\nExecute: pip install openpyxl")
+            return
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"{fmes}-{fano}"
+        hf = PatternFill("solid", fgColor="2C3E50")
+        hfont = Font(color="FFFFFF", bold=True, size=9)
+        for ci, h in enumerate(["Tipo","Data","Referência","Cliente","Carro","NFI",
+                                  "Receita","Custo","Lucro"], 1):
+            c = ws.cell(1, ci, h)
+            c.font = hfont; c.fill = hf
+            c.alignment = Alignment(horizontal="center")
+        for ri_i, (tipo, data, ref, cli, carro, nfi_r, rec, cus, luc) in enumerate(items, 2):
+            for ci, v in enumerate([tipo,data,ref,cli,carro,nfi_r,rec,cus,luc], 1):
+                ws.cell(ri_i, ci, v)
+        ri_s = len(items)+3
+        ws.cell(ri_s,5,"TOTAIS").font = Font(bold=True)
+        tot_luc_sum = sum(x[8] for x in items)
+        ws.cell(ri_s,7,sum(x[6] for x in items)).font = Font(bold=True)
+        ws.cell(ri_s,8,sum(x[7] for x in items)).font = Font(bold=True)
+        ws.cell(ri_s,9,tot_luc_sum).font = Font(
+            bold=True, color="1E8449" if tot_luc_sum>=0 else "C0392B")
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = 16
+        wb.save(path)
+        msgbox.showinfo("Excel Exportado", f"Arquivo salvo:\n{path}")
 
     # ══════════════════════════════════════════════════════════════════════════
     # MÓDULO: SHAKEN
@@ -4832,6 +5460,9 @@ class KMCars(tk.Tk):
         tk.Label(lh, text="🚗  Shaken Registrados",
                  font=("Helvetica", 11, "bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(lh, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=self._refresh_shaken).pack(side="right", padx=(8,0))
         self._lbl_sk_total = tk.Label(lh, text="", font=("Helvetica", 8),
                                       bg=COLORS["bg_card"], fg=COLORS["text_muted"])
         self._lbl_sk_total.pack(side="right")
@@ -4878,7 +5509,29 @@ class KMCars(tk.Tk):
                      state="readonly", font=("Helvetica", 8), width=12
                      ).pack(side="left", padx=(2, 0), ipady=2)
         self._sk_filtro_carro_tipo.trace_add("write", lambda *_: self._refresh_shaken())
-        tk.Button(fb, text="↺", font=("Helvetica", 9, "bold"),
+
+        # Filtro NFI
+        tk.Label(fb, text="NFI:", font=("Helvetica", 8),
+                 bg=COLORS["bg_main"], fg=COLORS["text_secondary"]).pack(side="left", padx=(8,0))
+        self._sk_filtro_nfi = tk.StringVar(value="Todos")
+        ttk.Combobox(fb, textvariable=self._sk_filtro_nfi,
+                     values=["Todos", "SNF", "CNF"],
+                     state="readonly", font=("Helvetica", 8), width=7
+                     ).pack(side="left", padx=(4, 0), ipady=2)
+        self._sk_filtro_nfi.trace_add("write", lambda *_: self._refresh_shaken())
+
+        # Botões exportar
+        fb2 = tk.Frame(list_panel, bg=COLORS["bg_main"])
+        fb2.pack(fill="x", padx=14, pady=(0, 4))
+        tk.Button(fb2, text="📄 PDF", font=("Helvetica", 8, "bold"),
+                  bg="#C0392B", fg="white", relief="flat", cursor="hand2",
+                  command=self._exportar_shaken_pdf
+                  ).pack(side="left", ipady=3, ipadx=4)
+        tk.Button(fb2, text="📊 Excel", font=("Helvetica", 8, "bold"),
+                  bg="#1E8449", fg="white", relief="flat", cursor="hand2",
+                  command=self._exportar_shaken_excel
+                  ).pack(side="left", padx=(6,0), ipady=3, ipadx=4)
+        tk.Button(fb2, text="↺ Atualizar", font=("Helvetica", 9, "bold"),
                   bg=COLORS["accent"], fg="white", relief="flat",
                   cursor="hand2", command=self._refresh_shaken
                   ).pack(side="right", ipady=3, padx=(0, 4))
@@ -4889,7 +5542,8 @@ class KMCars(tk.Tk):
             ("Cor", 60, "w"), ("Placa", 75, "w"), ("Chassi", 95, "w"),
             ("Tipo", 65, "c"), ("Cliente", 105, "w"),
             ("Custo SK", 80, "w"), ("Valor", 80, "w"),
-            ("Data Shaken", 95, "w"), ("Status", 80, "c"), ("Ações", 65, "w"),
+            ("Data Shaken", 95, "w"), ("Status", 80, "c"),
+            ("NFI", 50, "c"), ("Ações", 65, "w"),
         ]
         self._sk_cols = SK_COLS
         SK_TOTAL_W = sum(c[1] for c in SK_COLS)
@@ -5039,6 +5693,18 @@ class KMCars(tk.Tk):
             activebackground=COLORS["bg_card"],
             command=self._sk_toggle_por_conta
         ).pack(side="left")
+
+        # ── NFI ────────────────────────────────────────────────────────
+        lbl("NFI")
+        _nfi_f_sk = tk.Frame(fcard, bg=COLORS["bg_card"])
+        _nfi_f_sk.pack(anchor="w", padx=18, pady=(4, 10))
+        self._sk_nfi_var = tk.StringVar(value="SNF")
+        for _lbl2, _val2 in [("SNF", "SNF"), ("CNF", "CNF")]:
+            tk.Radiobutton(_nfi_f_sk, text=_lbl2, variable=self._sk_nfi_var, value=_val2,
+                           font=("Helvetica", 9),
+                           bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+                           activebackground=COLORS["bg_card"],
+                           selectcolor=COLORS["bg_main"]).pack(anchor="w")
 
         # ── Obs ────────────────────────────────────────────────────────
         lbl("Obs.")
@@ -5289,22 +5955,49 @@ class KMCars(tk.Tk):
         data_reg = datetime.date.today().strftime("%d/%m/%Y")
 
         if self._sk_edit_id is not None:
+            nfi_sk = getattr(self, "_sk_nfi_var", None)
+            nfi_sk = nfi_sk.get() if nfi_sk else "SNF"
             self.conn.execute(
                 "UPDATE shaken SET carro_id=?,cliente_id=?,valor=?,"
-                "custo_shaken=?,data_vencimento=?,por_conta=?,obs=? WHERE id=?",
+                "custo_shaken=?,data_vencimento=?,por_conta=?,obs=?,nfi=? WHERE id=?",
                 (carro_id, cliente_id, valor, custo_shaken,
-                 data_venc, por_conta, obs, self._sk_edit_id))
+                 data_venc, por_conta, obs, nfi_sk, self._sk_edit_id))
         else:
             sk_num = self._next_sk_num()
             renovacao_de = getattr(self, "_sk_renovacao_de", None)
+            nfi_sk = getattr(self, "_sk_nfi_var", None)
+            nfi_sk = nfi_sk.get() if nfi_sk else "SNF"
             self.conn.execute(
                 "INSERT INTO shaken "
                 "(sk_num,carro_id,cliente_id,valor,custo_shaken,"
-                "data_vencimento,por_conta,data_registro,obs,renovacao_de) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "data_vencimento,por_conta,data_registro,obs,renovacao_de,nfi) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (sk_num, carro_id, cliente_id, valor, custo_shaken,
-                 data_venc, por_conta, data_reg, obs, renovacao_de))
+                 data_venc, por_conta, data_reg, obs, renovacao_de, nfi_sk))
             self._sk_renovacao_de = None
+            # IS automático para CNF (Shaken) → insere em custos_sk
+            if nfi_sk == "CNF" and valor:
+                try:
+                    is_perc_sk = float(self.conn.execute(
+                        "SELECT valor FROM configuracoes WHERE chave='is_percentual'"
+                        ).fetchone()[0] or 10)
+                except Exception:
+                    is_perc_sk = 10.0
+                vv_sk = int(str(valor or "0").replace(",",""))
+                is_val_sk = int(vv_sk * is_perc_sk / 100)
+                if is_val_sk > 0:
+                    # Pega o ID do Shaken recém inserido
+                    sk_id_is = self.conn.execute(
+                        "SELECT id FROM shaken ORDER BY id DESC LIMIT 1").fetchone()
+                    if sk_id_is:
+                        self.conn.execute(
+                            "INSERT INTO custos_sk "
+                            "(shaken_id,tipo_custo,descricao,valor,data_custo) "
+                            "VALUES (?,?,?,?,?)",
+                            (sk_id_is[0], "IS",
+                             "IS automático CNF",
+                             str(is_val_sk), data_reg))
+                        self.conn.commit()
 
         # Salva data_shaken no cadastro do carro
         self.conn.execute(
@@ -5472,6 +6165,9 @@ class KMCars(tk.Tk):
                 r.get("placa",""), r.get("status","")])).lower()
             return termo in hay
 
+        fnfi_sk = getattr(self, "_sk_filtro_nfi", None)
+        fnfi_sk = fnfi_sk.get() if fnfi_sk else "Todos"
+
         # ── Carros com shaken registrado (inclui Inativos, filtrado por carro_tipo_match) ──
         registrados = [dict(r) for r in self.conn.execute(
             "SELECT s.*, "
@@ -5541,6 +6237,9 @@ class KMCars(tk.Tk):
         reg_filtrados = []
         for r in registrados:
             is_renovado = bool(r.get("renovado"))
+            # Filtro NFI
+            if fnfi_sk != "Todos" and (r.get("nfi") or "SNF") != fnfi_sk:
+                continue
             if ftipo == "Renovados":
                 # Filtro Renovados: mostra apenas SKs marcadas como renovadas
                 if not is_renovado: continue
@@ -5566,6 +6265,7 @@ class KMCars(tk.Tk):
             items.append(("sk", r, st, cor))
 
         self._lbl_sk_total.configure(text=f"{len(items)} registro(s)")
+        self._shaken_lista_filtrada = items
 
         if not items:
             tk.Label(self._sk_rows_frame,
@@ -5903,6 +6603,9 @@ class KMCars(tk.Tk):
             self._sk_obs_entry.insert(0, r["obs"])
 
         self._sk_update_form_visibility()
+        # NFI
+        if hasattr(self, "_sk_nfi_var"):
+            self._sk_nfi_var.set(r.get("nfi") or "SNF")
         self._lbl_sk_status.configure(text="")
 
     def _sk_marcar_por_conta(self, sk_id):
@@ -6180,6 +6883,9 @@ class KMCars(tk.Tk):
         hh.pack(fill="x", padx=14, pady=(12, 4))
         tk.Label(hh, text="⚙  Histórico de Serviços", font=("Helvetica", 11, "bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(hh, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=self._refresh_tabela_servicos).pack(side="right", padx=(8,0))
         self._lbl_total_serv = tk.Label(hh, text="0 registros", font=("Helvetica", 8),
                                          bg=COLORS["bg_card"], fg=COLORS["text_muted"])
         self._lbl_total_serv.pack(side="right")
@@ -6225,6 +6931,26 @@ class KMCars(tk.Tk):
                      state="readonly", font=("Helvetica", 8), width=11
                      ).pack(side="left", padx=(2,0), ipady=2)
         self._serv_filtro_status.trace_add("write", lambda *_: self._refresh_tabela_servicos())
+
+        # Filtro NFI + botões exportar
+        fbar_nfi_os = tk.Frame(hist_panel, bg=COLORS["bg_main"])
+        fbar_nfi_os.pack(fill="x", padx=14, pady=(0, 4))
+        tk.Label(fbar_nfi_os, text="NFI:", font=("Helvetica", 8),
+                 bg=COLORS["bg_main"], fg=COLORS["text_secondary"]).pack(side="left")
+        self._serv_filtro_nfi = tk.StringVar(value="Todos")
+        ttk.Combobox(fbar_nfi_os, textvariable=self._serv_filtro_nfi,
+                     values=["Todos", "SNF", "CNF"],
+                     state="readonly", font=("Helvetica", 8), width=7
+                     ).pack(side="left", padx=(4, 8), ipady=2)
+        self._serv_filtro_nfi.trace_add("write", lambda *_: self._refresh_tabela_servicos())
+        tk.Button(fbar_nfi_os, text="📄 PDF", font=("Helvetica", 8, "bold"),
+                  bg="#C0392B", fg="white", relief="flat", cursor="hand2",
+                  command=self._exportar_os_pdf
+                  ).pack(side="right", padx=(4,0), ipady=3, ipadx=4)
+        tk.Button(fbar_nfi_os, text="📊 Excel", font=("Helvetica", 8, "bold"),
+                  bg="#1E8449", fg="white", relief="flat", cursor="hand2",
+                  command=self._exportar_os_excel
+                  ).pack(side="right", padx=(4,0), ipady=3, ipadx=4)
 
         # Cabeçalho tabela
         tk.Frame(hist_panel, bg=COLORS["border"], height=1).pack(fill="x", padx=14)
@@ -6345,6 +7071,21 @@ class KMCars(tk.Tk):
                      state="readonly", font=("Helvetica", 10), width=28
                      ).pack(padx=18, pady=(4, 12), ipady=4)
 
+
+        # ── NFI ───────────────────────────────────────────────────────────────
+        tk.Label(fcard, text="NFI",
+                 font=("Helvetica", 9, "bold"),
+                 bg=COLORS["bg_card"], fg=COLORS["text_secondary"]).pack(anchor="w", padx=18)
+        _nfi_f_os = tk.Frame(fcard, bg=COLORS["bg_card"])
+        _nfi_f_os.pack(anchor="w", padx=18, pady=(4, 12))
+        self._serv_nfi_var = tk.StringVar(value="SNF")
+        for _lbl, _val in [("SNF", "SNF"), ("CNF", "CNF")]:
+            tk.Radiobutton(_nfi_f_os, text=_lbl, variable=self._serv_nfi_var, value=_val,
+                           font=("Helvetica", 9),
+                           bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+                           activebackground=COLORS["bg_card"],
+                           selectcolor=COLORS["bg_main"]).pack(anchor="w")
+
         # Status label + botões
         self._lbl_serv_status = tk.Label(fcard, text="", font=("Helvetica", 8),
                                           bg=COLORS["bg_card"], fg=COLORS["red"])
@@ -6449,11 +7190,13 @@ class KMCars(tk.Tk):
             cliente_id = None
 
         if self._serv_edit_id is not None:
+            nfi_serv = getattr(self, "_serv_nfi_var", None)
+            nfi_serv = nfi_serv.get() if nfi_serv else "SNF"
             self.conn.execute("""UPDATE servicos SET
                 carro_id=?,carro=?,cliente_id=?,data_servico=?,tipo_servico=?,
-                descricao=?,valor=?,status=?,obs=? WHERE id=?""",
+                descricao=?,valor=?,status=?,obs=?,nfi=? WHERE id=?""",
                 (carro_id, carro_txt, cliente_id, data_serv, tipo_serv,
-                 desc, valor, status, obs, self._serv_edit_id))
+                 desc, valor, status, obs, nfi_serv, self._serv_edit_id))
             self.conn.commit()
             self._serv_edit_id = None
             self._lbl_serv_title.configure(text="⚙  Nova Ordem de Serviço")
@@ -6461,12 +7204,37 @@ class KMCars(tk.Tk):
             self._lbl_serv_status.configure(text="✔ OS atualizada!", fg=COLORS["green"])
         else:
             os_num = self._next_os_num()
+            nfi_serv = getattr(self, "_serv_nfi_var", None)
+            nfi_serv = nfi_serv.get() if nfi_serv else "SNF"
             self.conn.execute("""INSERT INTO servicos
-                (os_num,carro_id,carro,cliente_id,data_servico,tipo_servico,descricao,valor,status,obs)
-                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (os_num,carro_id,carro,cliente_id,data_servico,tipo_servico,descricao,valor,status,obs,nfi)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (os_num, carro_id, carro_txt, cliente_id, data_serv,
-                 tipo_serv, desc, valor, status, obs))
+                 tipo_serv, desc, valor, status, obs, nfi_serv))
             self.conn.commit()
+            # IS automático para CNF (OS) → insere em custos_os
+            if nfi_serv == "CNF" and valor:
+                try:
+                    is_perc = float(self.conn.execute(
+                        "SELECT valor FROM configuracoes WHERE chave='is_percentual'"
+                        ).fetchone()[0] or 10)
+                except Exception:
+                    is_perc = 10.0
+                vv_os = int(str(valor or "0").replace(",",""))
+                is_val_os = int(vv_os * is_perc / 100)
+                if is_val_os > 0:
+                    # Pega o ID da OS recém inserida
+                    sid_is = self.conn.execute(
+                        "SELECT id FROM servicos ORDER BY id DESC LIMIT 1").fetchone()
+                    if sid_is:
+                        self.conn.execute(
+                            "INSERT INTO custos_os "
+                            "(servico_id,tipo_custo,descricao,valor,data_custo) "
+                            "VALUES (?,?,?,?,?)",
+                            (sid_is[0], "IS",
+                             "IS automático CNF",
+                             str(is_val_os), data_serv or ""))
+                        self.conn.commit()
             self._lbl_serv_status.configure(text=f"✔ {os_num} registrada!", fg=COLORS["green"])
 
         self.servicos_data = [dict(r) for r in
@@ -6535,6 +7303,9 @@ class KMCars(tk.Tk):
         if hasattr(self, "_serv_obs_text"):
             self._serv_obs_text.delete("1.0", tk.END)
             self._serv_obs_text.insert("1.0", s.get("obs") or "")
+        # NFI
+        if hasattr(self, "_serv_nfi_var"):
+            self._serv_nfi_var.set(s.get("nfi") or "SNF")
         self._lbl_serv_status.configure(text="")
 
     def _excluir_servico(self, sid):
@@ -6578,7 +7349,14 @@ class KMCars(tk.Tk):
             if fs != "Todos":
                 lista = [s for s in lista if s.get("status","") == fs]
 
+        # Filtro NFI
+        fnfi_os = getattr(self, "_serv_filtro_nfi", None)
+        fnfi_os = fnfi_os.get() if fnfi_os else "Todos"
+        if fnfi_os != "Todos":
+            lista = [s for s in lista if (s.get("nfi") or "SNF") == fnfi_os]
+
         self._lbl_total_serv.configure(text=f"{len(lista)} registro(s)")
+        self._servicos_lista_filtrada = lista[:]
 
         if not lista:
             tk.Label(self._serv_rows_frame, text="Nenhuma OS encontrada.",
@@ -6630,6 +7408,13 @@ class KMCars(tk.Tk):
                      font=("Helvetica", 7, "bold"), bg=sc, fg="white",
                      width=13, anchor="center").pack(side="left", padx=2, pady=3)
 
+            # NFI badge
+            nfi_os = s.get("nfi") or "SNF"
+            nfi_os_bg = "#8E44AD" if nfi_os == "CNF" else "#7F8C8D"
+            tk.Label(row, text=nfi_os, font=("Helvetica",7,"bold"),
+                     bg=nfi_os_bg, fg="white", width=5, anchor="center"
+                     ).pack(side="left", padx=2, pady=3)
+
             acts = tk.Frame(row, bg=rb)
             acts.pack(side="left", padx=2)
             tk.Button(acts, text="✏", font=("Helvetica", 8),
@@ -6642,6 +7427,18 @@ class KMCars(tk.Tk):
                       cursor="hand2", padx=4, pady=1,
                       command=lambda sid=s["id"]: self._excluir_servico(sid)
                       ).pack(side="left", padx=(0, 2))
+            # Botão Concluir — ativo só se não estiver Concluído
+            is_done = s.get("status") == "Concluído"
+            tk.Button(acts, text="✔ Concluir",
+                      font=("Helvetica", 7, "bold"),
+                      bg=COLORS["green"] if not is_done else COLORS["border"],
+                      fg="white", relief="flat",
+                      cursor="hand2" if not is_done else "arrow",
+                      padx=4, pady=1,
+                      state="normal" if not is_done else "disabled",
+                      command=(lambda sid=s["id"]: self._concluir_servico(sid))
+                               if not is_done else (lambda: None)
+                      ).pack(side="left", padx=(0, 2))
             # Botão de observações — amarelo, sempre visível
             obs_color = "#F1C40F"
             obs_fg    = "#333333"
@@ -6650,6 +7447,45 @@ class KMCars(tk.Tk):
                       cursor="hand2", padx=4, pady=1,
                       command=lambda sid=s["id"]: self._os_sidebar_abrir(sid)
                       ).pack(side="left")
+
+    def _concluir_servico(self, sid):
+        """Marca um serviço como Concluído e atualiza as telas."""
+        import datetime as _dtc
+        import tkinter.messagebox as mb
+        try:
+            row = self.conn.execute(
+                "SELECT os_num, status FROM servicos WHERE id=?", (sid,)).fetchone()
+            if not row:
+                return
+            os_num, status = row
+            if status == "Concluído":
+                return
+            nome_os = os_num or f"#{sid}"
+            if not mb.askyesno("Concluir Serviço",
+                               f"Confirmar conclusão da OS {nome_os}?"):
+                return
+            hoje = _dtc.date.today()
+            data_str = f"{hoje.day:02d}/{hoje.month:02d}/{hoje.year}"
+            # Tenta gravar data_conclusao; se coluna não existir, grava só o status
+            try:
+                self.conn.execute(
+                    "UPDATE servicos SET status='Concluído', data_conclusao=? WHERE id=?",
+                    (data_str, sid))
+            except Exception:
+                self.conn.execute(
+                    "UPDATE servicos SET status='Concluído' WHERE id=?", (sid,))
+            self.conn.commit()
+            # Recarrega dados e atualiza tabela
+            self.servicos_data = [dict(r) for r in
+                self.conn.execute("SELECT * FROM servicos ORDER BY id DESC").fetchall()]
+            self._refresh_tabela_servicos()
+            # Atualiza dashboard Serviços se estiver montado
+            if hasattr(self, "_dash_serv_rows"):
+                try: self._refresh_dash_servicos()
+                except Exception: pass
+        except Exception as e:
+            import tkinter.messagebox as mb2
+            mb2.showerror("Erro", f"Nao foi possivel concluir o servico: {e}")
 
     def _os_sidebar_abrir(self, sid):
         """Preenche o sidebar com detalhes e obs da OS selecionada."""
@@ -6821,6 +7657,8 @@ class KMCars(tk.Tk):
                 self._build_dash_indicadores(frame)
             elif sub == "Relatório Mensal":
                 self._build_relatorio_mensal(frame)
+            elif sub == "Relatório Anual":
+                self._build_relatorio_anual(frame)
             elif sub == "Dossiê Cliente":
                 self._build_dash_dossie_cliente(frame)
             elif sub == "Dossiê Carro":
@@ -6935,19 +7773,289 @@ class KMCars(tk.Tk):
             tk.Label(c, text=sub, font=("Helvetica", 8),
                      bg=COLORS["bg_card"], fg=COLORS["text_muted"]).pack(pady=(0,6))
 
-        # ── Gráficos lado a lado ───────────────────────────────────────────────
+        # ── Cards de Receita Total e Quantidade ──────────────────────────────
+        import datetime as _dt2
+        _hoje2 = _dt2.date.today()
+        _mes2  = f"{_hoje2.month:02d}"
+        _ano2  = str(_hoje2.year)
+        _pat2  = f"%/{_mes2}/{_ano2}"
+
+        def _int2(s):
+            try: return int(str(s or "0").replace(",",""))
+            except: return 0
+
+        # Receitas do mês
+        _rec_v  = sum(_int2(r[0]) for r in self.conn.execute(
+            "SELECT valor_venda FROM vendas WHERE data_venda LIKE ?", (_pat2,)).fetchall())
+        _rec_os = sum(_int2(r[0]) for r in self.conn.execute(
+            "SELECT valor FROM servicos WHERE data_servico LIKE ?", (_pat2,)).fetchall())
+        _rec_sk = sum(_int2(r[0]) for r in self.conn.execute(
+            "SELECT valor FROM shaken WHERE data_registro LIKE ? AND valor IS NOT NULL", (_pat2,)).fetchall())
+        _rec_tot = _rec_v + _rec_os + _rec_sk
+
+        # Quantidades do mês
+        _cnt_v  = self.conn.execute(
+            "SELECT COUNT(*) FROM vendas WHERE data_venda LIKE ?", (_pat2,)).fetchone()[0]
+        _cnt_os = self.conn.execute(
+            "SELECT COUNT(*) FROM servicos WHERE data_servico LIKE ?", (_pat2,)).fetchone()[0]
+        _cnt_sk = self.conn.execute(
+            "SELECT COUNT(*) FROM shaken WHERE data_registro LIKE ?", (_pat2,)).fetchone()[0]
+        _cnt_tot = _cnt_v + _cnt_os + _cnt_sk
+
         charts_row = tk.Frame(root, bg=COLORS["bg_content"])
-        charts_row.pack(fill="both", expand=True)
+        charts_row.pack(fill="both", expand=True, pady=(4, 0))
 
-        self._draw_bar_chart(charts_row, "◆  Vendas — Valor (¥) últimos 12 meses",
-                             "valor", COLORS["green"], side="left")
-        self._draw_bar_chart(charts_row, "◆  Vendas — Quantidade últimos 12 meses",
-                             "qtd",   COLORS["blue"],  side="right")
+        COLOR_V  = COLORS["green"]
+        COLOR_OS = COLORS["blue"]
+        COLOR_SK = "#D4AC0D"
 
-        # ── Ranking Top 10 carros mais lucrativos ──────────────────────────────
-        rank_row = tk.Frame(root, bg=COLORS["bg_content"])
-        rank_row.pack(fill="x", pady=(10, 0))
-        self._draw_ranking_carros(rank_row)
+        for card_title, rows_data, total_lbl, total_val in [
+            (
+                "💰  Receita do Mês",
+                [
+                    ("◆  Vendas",            f"¥ {_rec_v:,}",  COLOR_V),
+                    ("⚙  Ordens de Serviço", f"¥ {_rec_os:,}", COLOR_OS),
+                    ("🔔  Shaken",           f"¥ {_rec_sk:,}", COLOR_SK),
+                ],
+                "Total",
+                f"¥ {_rec_tot:,}",
+            ),
+            (
+                "📦  Quantidade do Mês",
+                [
+                    ("◆  Vendas",            str(_cnt_v),  COLOR_V),
+                    ("⚙  Ordens de Serviço", str(_cnt_os), COLOR_OS),
+                    ("🔔  Shaken",           str(_cnt_sk), COLOR_SK),
+                ],
+                "Total",
+                str(_cnt_tot),
+            ),
+        ]:
+            card = tk.Frame(charts_row, bg=COLORS["bg_card"],
+                            highlightthickness=1, highlightbackground=COLORS["border"])
+            card.pack(side="left", fill="both", expand=True, padx=(0, 10))
+            tk.Frame(card, bg=COLORS["accent"], height=3).pack(fill="x")
+            tk.Label(card, text=card_title, font=("Helvetica", 10, "bold"),
+                     bg=COLORS["bg_card"], fg=COLORS["text_primary"]
+                     ).pack(anchor="w", padx=16, pady=(10, 6))
+
+            # Linhas por tipo
+            for row_lbl, row_val, row_color in rows_data:
+                row_f = tk.Frame(card, bg=COLORS["bg_card"])
+                row_f.pack(fill="x", padx=16, pady=3)
+                # Barra colorida lateral
+                tk.Frame(row_f, bg=row_color, width=4, height=40
+                         ).pack(side="left", padx=(0, 10))
+                inner = tk.Frame(row_f, bg=COLORS["bg_card"])
+                inner.pack(side="left", fill="both", expand=True)
+                tk.Label(inner, text=row_lbl, font=("Helvetica", 8),
+                         bg=COLORS["bg_card"], fg=COLORS["text_muted"],
+                         anchor="w").pack(anchor="w")
+                tk.Label(inner, text=row_val, font=("Helvetica", 18, "bold"),
+                         bg=COLORS["bg_card"], fg=row_color,
+                         anchor="w").pack(anchor="w")
+
+            # Separador + Total
+            tk.Frame(card, bg=COLORS["border"], height=1).pack(fill="x", padx=16, pady=(8, 0))
+            tot_f = tk.Frame(card, bg=COLORS["bg_card"])
+            tot_f.pack(fill="x", padx=16, pady=(6, 12))
+            tk.Label(tot_f, text=total_lbl, font=("Helvetica", 9, "bold"),
+                     bg=COLORS["bg_card"], fg=COLORS["text_muted"]).pack(side="left")
+            tk.Label(tot_f, text=total_val, font=("Helvetica", 16, "bold"),
+                     bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="right")
+
+        # ── Cards anuais com gráfico de colunas ──────────────────────────────
+        _ano_atual = datetime.date.today().year
+        annual_row = tk.Frame(root, bg=COLORS["bg_content"])
+        annual_row.pack(fill="both", expand=True, pady=(12, 0))
+
+        annual_left  = tk.Frame(annual_row, bg=COLORS["bg_content"])
+        annual_right = tk.Frame(annual_row, bg=COLORS["bg_content"])
+        annual_left.pack(side="left",  fill="both", expand=True, padx=(0, 6))
+        annual_right.pack(side="right", fill="both", expand=True, padx=(6, 0))
+
+        self._build_annual_charts(annual_left,  "receita",    _ano_atual)
+        self._build_annual_charts(annual_right, "quantidade", _ano_atual)
+
+    def _build_annual_charts(self, parent, mode, ano):
+        """Cards anuais: receita/quantidade com colunas empilhadas + tooltip ao hover."""
+        import datetime as _dta
+
+        def _int(s):
+            try: return int(str(s or "0").replace(",",""))
+            except: return 0
+
+        MESES_ABR = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+        COLOR_V   = COLORS["green"]
+        COLOR_OS  = COLORS["blue"]
+        COLOR_SK  = "#D4AC0D"
+        COLOR_TOT = COLORS["accent"]
+
+        # ── Coleta dados por mês ─────────────────────────────────────────────
+        dados_v  = []; dados_os = []; dados_sk = []
+        for m in range(1, 13):
+            ms  = f"{m:02d}"; ys = str(ano); pat = f"%/{ms}/{ys}"
+            if mode == "receita":
+                v   = sum(_int(r[0]) for r in self.conn.execute(
+                    "SELECT valor_venda FROM vendas WHERE data_venda LIKE ?", (pat,)).fetchall())
+                os_ = sum(_int(r[0]) for r in self.conn.execute(
+                    "SELECT valor FROM servicos WHERE data_servico LIKE ?", (pat,)).fetchall())
+                sk  = sum(_int(r[0]) for r in self.conn.execute(
+                    "SELECT valor FROM shaken WHERE data_registro LIKE ? AND valor IS NOT NULL", (pat,)).fetchall())
+            else:
+                v   = self.conn.execute("SELECT COUNT(*) FROM vendas WHERE data_venda LIKE ?",    (pat,)).fetchone()[0]
+                os_ = self.conn.execute("SELECT COUNT(*) FROM servicos WHERE data_servico LIKE ?", (pat,)).fetchone()[0]
+                sk  = self.conn.execute("SELECT COUNT(*) FROM shaken WHERE data_registro LIKE ?",  (pat,)).fetchone()[0]
+            dados_v.append(v); dados_os.append(os_); dados_sk.append(sk)
+
+        tot_v = sum(dados_v); tot_os = sum(dados_os); tot_sk = sum(dados_sk)
+        tot_all = tot_v + tot_os + tot_sk
+        is_rec  = (mode == "receita")
+        title   = f"{'💰' if is_rec else '📦'}  {'Receita' if is_rec else 'Quantidade'} Anual — {ano}"
+
+        card = tk.Frame(parent, bg=COLORS["bg_card"],
+                        highlightthickness=1, highlightbackground=COLORS["border"])
+        card.pack(fill="both", expand=True, pady=(8, 0))
+        tk.Frame(card, bg=COLOR_TOT, height=3).pack(fill="x")
+
+        # título + legenda
+        hdr_f = tk.Frame(card, bg=COLORS["bg_card"])
+        hdr_f.pack(fill="x", padx=14, pady=(8, 4))
+        tk.Label(hdr_f, text=title, font=("Helvetica", 10, "bold"),
+                 bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        leg_f = tk.Frame(hdr_f, bg=COLORS["bg_card"])
+        leg_f.pack(side="right")
+        for lbl, clr in [("Vendas", COLOR_V), ("OS", COLOR_OS), ("Shaken", COLOR_SK)]:
+            tk.Frame(leg_f, bg=clr, width=10, height=10).pack(side="left", padx=(6,2))
+            tk.Label(leg_f, text=lbl, font=("Helvetica", 7),
+                     bg=COLORS["bg_card"], fg=COLORS["text_muted"]).pack(side="left", padx=(0,4))
+
+        # ── Canvas ──────────────────────────────────────────────────────────
+        cv_frame = tk.Frame(card, bg=COLORS["bg_card"])
+        cv_frame.pack(fill="x", padx=14, pady=(0, 4))
+        CHART_H = 140
+        cv = tk.Canvas(cv_frame, bg=COLORS["bg_card"], highlightthickness=0, height=CHART_H + 30)
+        cv.pack(fill="x")
+
+        # Tooltip window
+        _tip_win  = [None]
+        _tip_lbl  = [None]
+        # bar_zones: list of (x0, x1, mes_idx) para hit-test
+        _bar_zones = []
+
+        def _fmt_val(v):
+            if is_rec: return f"¥ {v:,}"
+            return str(v)
+
+        def _draw(event=None):
+            cv.delete("all")
+            _bar_zones.clear()
+            W = cv.winfo_width()
+            if W < 40: return
+            combined = [a + b + c for a, b, c in zip(dados_v, dados_os, dados_sk)]
+            max_v = max(combined) if any(combined) else 1
+            pad_l, pad_r = 48, 8
+            avail = W - pad_l - pad_r
+            slot  = avail / 12
+            bar_w = max(4, int(slot * 0.65))
+
+            for pct in [0.25, 0.5, 0.75, 1.0]:
+                gy = CHART_H - int(CHART_H * pct)
+                cv.create_line(pad_l, gy, W - pad_r, gy, fill=COLORS["border"], dash=(3, 3))
+                lbl = (f"¥{int(max_v*pct)//1000}k" if is_rec and max_v >= 1000
+                       else f"¥{int(max_v*pct):,}" if is_rec
+                       else str(int(max_v * pct)))
+                cv.create_text(pad_l - 4, gy, text=lbl, anchor="e",
+                               font=("Helvetica", 6), fill=COLORS["text_muted"])
+
+            for i in range(12):
+                xc   = pad_l + slot * i + slot / 2
+                x0   = xc - bar_w / 2; x1 = xc + bar_w / 2
+                base = CHART_H
+                for val, clr in [(dados_sk[i], COLOR_SK),
+                                 (dados_os[i], COLOR_OS),
+                                 (dados_v[i],  COLOR_V)]:
+                    if val <= 0: continue
+                    h = max(2, int(CHART_H * val / max_v))
+                    cv.create_rectangle(x0, base - h, x1, base, fill=clr, outline="")
+                    base -= h
+                total_m = dados_v[i] + dados_os[i] + dados_sk[i]
+                if total_m > 0:
+                    top_y = CHART_H - int(CHART_H * total_m / max_v)
+                    lbl_t = (f"¥{total_m//1000}k" if is_rec and total_m >= 10000
+                             else _fmt_val(total_m))
+                    cv.create_text(xc, top_y - 4, text=lbl_t,
+                                   font=("Helvetica", 6, "bold"),
+                                   fill=COLORS["text_primary"], anchor="s")
+                cv.create_text(xc, CHART_H + 14, text=MESES_ABR[i],
+                               font=("Helvetica", 6), fill=COLORS["text_muted"], anchor="center")
+                _bar_zones.append((x0 - 4, x1 + 4, i))
+
+        def _hide_tip():
+            if _tip_win[0]:
+                try: _tip_win[0].destroy()
+                except Exception: pass
+                _tip_win[0] = None; _tip_lbl[0] = None
+
+        def _show_tip(x_root, y_root, mes_idx):
+            _hide_tip()
+            v_  = dados_v[mes_idx];  os_ = dados_os[mes_idx]; sk_ = dados_sk[mes_idx]
+            tot = v_ + os_ + sk_
+            if tot == 0: return
+            lines = [
+                f"── {MESES_ABR[mes_idx]} {ano} ──",
+                f"◆ Vendas :  {_fmt_val(v_)}",
+                f"⚙ OS     :  {_fmt_val(os_)}",
+                f"🔔 Shaken:  {_fmt_val(sk_)}",
+                f"▦ Total  :  {_fmt_val(tot)}",
+            ]
+            tw = tk.Toplevel(cv)
+            tw.wm_overrideredirect(True)
+            tw.wm_geometry(f"+{x_root+14}+{y_root-10}")
+            tw.configure(bg="#1E293B")
+            tk.Label(tw, text="\n".join(lines),
+                     font=("Helvetica", 8), justify="left",
+                     bg="#1E293B", fg="white", padx=8, pady=6
+                     ).pack()
+            _tip_win[0] = tw; _tip_lbl[0] = tw
+
+        def _on_motion(event):
+            mx = cv.canvasx(event.x)
+            for (bx0, bx1, idx) in _bar_zones:
+                if bx0 <= mx <= bx1:
+                    _show_tip(event.x_root, event.y_root, idx)
+                    return
+            _hide_tip()
+
+        def _on_leave(event):
+            _hide_tip()
+
+        cv.bind("<Configure>", _draw)
+        cv.bind("<Motion>",    _on_motion)
+        cv.bind("<Leave>",     _on_leave)
+        cv.after(60, _draw)
+
+        # ── Totais anuais ────────────────────────────────────────────────────
+        tk.Frame(card, bg=COLORS["border"], height=1).pack(fill="x", padx=14, pady=(2, 0))
+        tot_row = tk.Frame(card, bg=COLORS["bg_card"])
+        tot_row.pack(fill="x", padx=14, pady=(6, 10))
+
+        def _tot_cell(parent_f, lbl, val, clr):
+            f = tk.Frame(parent_f, bg=COLORS["bg_card"])
+            f.pack(side="left", expand=True, fill="x")
+            tk.Label(f, text=lbl, font=("Helvetica", 7),
+                     bg=COLORS["bg_card"], fg=COLORS["text_muted"]).pack(anchor="w")
+            tk.Label(f, text=val, font=("Helvetica", 11, "bold"),
+                     bg=COLORS["bg_card"], fg=clr).pack(anchor="w")
+
+        fmt = lambda v: f"¥ {v:,}" if is_rec else str(v)
+        _tot_cell(tot_row, "◆ Vendas",  fmt(tot_v),   COLOR_V)
+        tk.Frame(tot_row, bg=COLORS["border"], width=1).pack(side="left", fill="y", pady=2)
+        _tot_cell(tot_row, "⚙ OS",      fmt(tot_os),  COLOR_OS)
+        tk.Frame(tot_row, bg=COLORS["border"], width=1).pack(side="left", fill="y", pady=2)
+        _tot_cell(tot_row, "🔔 Shaken", fmt(tot_sk),  COLOR_SK)
+        tk.Frame(tot_row, bg=COLORS["border"], width=1).pack(side="left", fill="y", pady=2)
+        _tot_cell(tot_row, "▦ Total",   fmt(tot_all), COLOR_TOT)
 
     def _draw_ranking_carros(self, parent):
         """Top 10 carros mais lucrativos + 5 com menor margem — canvas bar chart."""
@@ -7179,7 +8287,7 @@ class KMCars(tk.Tk):
                   relief="flat", cursor="hand2", padx=4,
                   command=lambda: self._dash_est_filtro.set("")
                   ).pack(side="left", padx=(3,0), ipady=3)
-        tk.Button(fb, text="↺", font=("Helvetica",9,"bold"),
+        tk.Button(fb, text="↺ Atualizar", font=("Helvetica",9,"bold"),
                   bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
                   command=self._refresh_dash_estoque
                   ).pack(side="right", ipady=3, padx=(0,4))
@@ -7448,6 +8556,9 @@ class KMCars(tk.Tk):
         tk.Label(hdr, text="◆  Vendas do Mês",
                  font=("Helvetica",12,"bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(hdr, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=self._refresh_dash_vendas).pack(side="right")
         kpi_row = tk.Frame(hdr, bg=COLORS["bg_card"])
         kpi_row.pack(side="right")
         self._lbl_dash_vd_qtd = tk.Label(kpi_row, text="0 vendas",
@@ -7674,6 +8785,9 @@ class KMCars(tk.Tk):
         tk.Label(hdr_l, text="⚙  Serviços em Aberto",
                  font=("Helvetica",11,"bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(hdr_l, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=self._refresh_dash_servicos).pack(side="right", padx=(8,0))
         self._lbl_dash_serv_total = tk.Label(hdr_l, text="",
                                               font=("Helvetica",9,"bold"),
                                               bg=COLORS["bg_card"], fg=COLORS["orange"])
@@ -7726,69 +8840,205 @@ class KMCars(tk.Tk):
                  font=("Helvetica",8),
                  bg=COLORS["bg_card"], fg=COLORS["text_muted"]).pack(pady=(0,10))
 
-        # Gráfico de serviços por mês
-        chart_card = tk.Frame(right, bg=COLORS["bg_card"],
-                              highlightthickness=1, highlightbackground=COLORS["border"])
-        chart_card.pack(fill="both", expand=True)
-        tk.Frame(chart_card, bg=COLORS["orange"], height=3).pack(fill="x")
-        tk.Label(chart_card, text="⚙  Receita de Serviços — últimos 12 meses",
-                 font=("Helvetica",10,"bold"),
-                 bg=COLORS["bg_card"], fg=COLORS["text_primary"]
-                 ).pack(anchor="w", padx=14, pady=(10,4))
+        self._dash_serv_kpi_card = kpi_card
+        self._dash_serv_kpi_lbl  = kpi_card.winfo_children()[1]  # label ¥ valor
 
-        cv_chart = tk.Canvas(chart_card, bg=COLORS["bg_card"], highlightthickness=0, height=180)
-        cv_chart.pack(fill="x", padx=14, pady=(0,12))
+        # ── helper genérico: cria card gráfico com tooltip ────────────────────
+        def _make_chart_card(parent_frame, title, bar_color, query_fn, height=150):
+            """Cria card com KPI + gráfico de barras + tooltip hover."""
+            cc = tk.Frame(parent_frame, bg=COLORS["bg_card"],
+                          highlightthickness=1, highlightbackground=COLORS["border"])
+            cc.pack(fill="x", pady=(0, 8))
+            tk.Frame(cc, bg=bar_color, height=3).pack(fill="x")
+            tk.Label(cc, text=title, font=("Helvetica",10,"bold"),
+                     bg=COLORS["bg_card"], fg=COLORS["text_primary"]
+                     ).pack(anchor="w", padx=14, pady=(10,4))
 
-        meses12 = self._get_ultimos_12_meses()
-        nomes_m = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
-        dados_serv = []
-        for (a, m2) in meses12:
-            ms2 = f"{m2:02d}"; ys2 = str(a)
+            cv = tk.Canvas(cc, bg=COLORS["bg_card"], highlightthickness=0, height=height+28)
+            cv.pack(fill="x", padx=14, pady=(0,10))
+
+            _tip  = [None]
+            _zones = []
+
+            def _hide_tip():
+                if _tip[0]:
+                    try: _tip[0].destroy()
+                    except Exception: pass
+                    _tip[0] = None
+
+            def _show_tip(xr, yr, lbl, val):
+                _hide_tip()
+                if val == 0: return
+                tw = tk.Toplevel(cv)
+                tw.wm_overrideredirect(True)
+                tw.wm_geometry(f"+{xr+12}+{yr-10}")
+                tw.configure(bg="#1E293B")
+                text = f"{lbl}\n¥ {val:,}"
+                tk.Label(tw, text=text, font=("Helvetica",8),
+                         justify="left", bg="#1E293B", fg="white",
+                         padx=8, pady=5).pack()
+                _tip[0] = tw
+
+            def _load_and_draw():
+                meses12 = self._get_ultimos_12_meses()
+                nomes_m = ["Jan","Fev","Mar","Abr","Mai","Jun",
+                           "Jul","Ago","Set","Out","Nov","Dez"]
+                dados = []
+                for (a, m2) in meses12:
+                    ms2 = f"{m2:02d}"; ys2 = str(a)
+                    val = query_fn(ms2, ys2)
+                    dados.append((nomes_m[m2-1], int(val or 0)))
+
+                def _draw(event=None):
+                    cv.delete("all")
+                    _zones.clear()
+                    W = cv.winfo_width()
+                    if W < 20: return
+                    CH = height
+                    max_v = max((d[1] for d in dados), default=1) or 1
+                    n = len(dados)
+                    pad_l, pad_r = 52, 10
+                    avail_w = W - pad_l - pad_r
+                    bar_w = max(4, int(avail_w / n * 0.6))
+                    gap   = avail_w / n
+                    for pct in [0.25, 0.5, 0.75, 1.0]:
+                        y = CH - int(CH * pct)
+                        cv.create_line(pad_l, y, W-pad_r, y,
+                                       fill=COLORS["border"], dash=(3,3))
+                        cv.create_text(pad_l-4, y,
+                                       text=f"¥{int(max_v*pct)//1000}k" if max_v>=1000 else str(int(max_v*pct)),
+                                       anchor="e", font=("Helvetica",7), fill=COLORS["text_muted"])
+                    for j, (lbl, val) in enumerate(dados):
+                        xc = pad_l + gap*j + gap/2
+                        bh = int(CH * val / max_v) if max_v else 0
+                        x0b = xc - bar_w/2; x1b = xc + bar_w/2
+                        if bh > 0:
+                            cv.create_rectangle(x0b, CH-bh, x1b, CH,
+                                                fill=bar_color, outline="")
+                            vt = f"¥{val//1000}k" if val>=1000 else f"¥{val}"
+                            cv.create_text(xc, CH-bh-3, text=vt,
+                                           font=("Helvetica",7,"bold"),
+                                           fill=bar_color, anchor="s")
+                        cv.create_text(xc, CH+14, text=lbl,
+                                       font=("Helvetica",7), fill=COLORS["text_muted"])
+                        _zones.append((x0b-4, x1b+4, lbl, val))
+
+                def _on_motion(event):
+                    mx = cv.canvasx(event.x)
+                    for (x0z, x1z, lbl, val) in _zones:
+                        if x0z <= mx <= x1z:
+                            _show_tip(event.x_root, event.y_root, lbl, val)
+                            return
+                    _hide_tip()
+
+                cv.bind("<Configure>", _draw)
+                cv.bind("<Motion>",    _on_motion)
+                cv.bind("<Leave>",     lambda e: _hide_tip())
+                cv.after(10, _draw)
+
+            _load_and_draw()
+            return cc, _load_and_draw
+
+        # ── Gráfico OS ────────────────────────────────────────────────────────
+        def _q_serv(ms2, ys2):
             try:
-                val = self.conn.execute(
+                return self.conn.execute(
                     "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
-                    "FROM servicos WHERE data_servico LIKE ? AND status='Concluído'",
+                    "FROM servicos WHERE data_servico LIKE ? AND status='Concluido'",
                     (f"%/{ms2}/{ys2}",)).fetchone()[0]
             except Exception:
-                val = 0
-            dados_serv.append((nomes_m[m2-1], val))
+                return 0
 
-        def _draw_serv(event=None):
-            cv_chart.delete("all")
-            W = cv_chart.winfo_width()
-            if W < 20: return
-            CHART_H = 150
-            max_v = max((d[1] for d in dados_serv), default=1) or 1
-            n = len(dados_serv)
-            pad_l, pad_r = 52, 10
-            avail_w = W - pad_l - pad_r
-            bar_w = max(4, int(avail_w / n * 0.6))
-            gap   = avail_w / n
-            for pct in [0.25, 0.5, 0.75, 1.0]:
-                y = CHART_H - int(CHART_H * pct)
-                cv_chart.create_line(pad_l, y, W-pad_r, y,
-                                     fill=COLORS["border"], dash=(3,3))
-                cv_chart.create_text(pad_l-4, y,
-                                     text=f"¥{int(max_v*pct)//1000}k" if max_v>=1000 else str(int(max_v*pct)),
-                                     anchor="e", font=("Helvetica",7), fill=COLORS["text_muted"])
-            for j, (lbl, val) in enumerate(dados_serv):
-                xc = pad_l + gap*j + gap/2
-                bh = int(CHART_H * val / max_v) if max_v else 0
-                if bh > 0:
-                    cv_chart.create_rectangle(xc-bar_w/2, CHART_H-bh, xc+bar_w/2, CHART_H,
-                                              fill=COLORS["orange"], outline="")
-                    vt = f"¥{val//1000}k" if val>=1000 else f"¥{val}"
-                    cv_chart.create_text(xc, CHART_H-bh-3, text=vt,
-                                         font=("Helvetica",7,"bold"),
-                                         fill=COLORS["orange"], anchor="s")
-                cv_chart.create_text(xc, CHART_H+14, text=lbl,
-                                     font=("Helvetica",7), fill=COLORS["text_muted"])
-        cv_chart.bind("<Configure>", _draw_serv)
-        cv_chart.after(120, _draw_serv)
+        def _q_serv_real(ms2, ys2):
+            try:
+                return self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM servicos WHERE data_servico LIKE ?",
+                    (f"%/{ms2}/{ys2}",)).fetchone()[0]
+            except Exception:
+                return 0
+
+        _cc_os, _load_os = _make_chart_card(
+            right,
+            "⚙  Receita de Serviços — últimos 12 meses",
+            COLORS["orange"],
+            _q_serv_real,
+            height=150,
+        )
+
+        # ── KPI Shaken mês atual ──────────────────────────────────────────────
+        try:
+            total_sk_mes = self.conn.execute(
+                "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                "FROM shaken WHERE data_registro LIKE ? AND valor IS NOT NULL",
+                (f"%/{ms}/{ys}",)).fetchone()[0]
+        except Exception:
+            total_sk_mes = 0
+
+        kpi_sk = tk.Frame(right, bg=COLORS["bg_card"],
+                          highlightthickness=1, highlightbackground=COLORS["border"])
+        kpi_sk.pack(fill="x", pady=(0, 8))
+        tk.Frame(kpi_sk, bg="#D4AC0D", height=3).pack(fill="x")
+        self._dash_sk_kpi_lbl = tk.Label(kpi_sk, text=f"¥ {int(total_sk_mes or 0):,}",
+                 font=("Helvetica",22,"bold"),
+                 bg=COLORS["bg_card"], fg="#D4AC0D")
+        self._dash_sk_kpi_lbl.pack(pady=(10,2))
+        tk.Label(kpi_sk, text=f"Total Shaken — {MESES_PT[hoje.month-1]} {hoje.year}",
+                 font=("Helvetica",8),
+                 bg=COLORS["bg_card"], fg=COLORS["text_muted"]).pack(pady=(0,10))
+
+        # ── Gráfico Shaken ────────────────────────────────────────────────────
+        def _q_shaken(ms2, ys2):
+            try:
+                return self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM shaken WHERE data_registro LIKE ? AND valor IS NOT NULL",
+                    (f"%/{ms2}/{ys2}",)).fetchone()[0]
+            except Exception:
+                return 0
+
+        _cc_sk, _load_sk = _make_chart_card(
+            right,
+            "🔔  Receita de Shaken — últimos 12 meses",
+            "#D4AC0D",
+            _q_shaken,
+            height=150,
+        )
+
+        # ── Guarda referências para atualização pelo botão ────────────────────
+        self._dash_serv_load_chart = lambda: (_load_os(), _load_sk())
 
         self._refresh_dash_servicos()
 
     def _refresh_dash_servicos(self):
+        # ── Actualiza gráfico de 12 meses ────────────────────────────────────
+        if hasattr(self, "_dash_serv_load_chart"):
+            try: self._dash_serv_load_chart()
+            except Exception: pass
+        # ── Actualiza KPI cards do mês atual ─────────────────────────────────
+        if hasattr(self, "_dash_serv_kpi_lbl"):
+            try:
+                import datetime as _dts
+                _h = _dts.date.today()
+                _ms = f"{_h.month:02d}"; _ys = str(_h.year)
+                _tm = self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM servicos WHERE data_servico LIKE ?",
+                    (f"%/{_ms}/{_ys}",)).fetchone()[0]
+                self._dash_serv_kpi_lbl.configure(text=f"¥ {int(_tm or 0):,}")
+            except Exception: pass
+        if hasattr(self, "_dash_sk_kpi_lbl"):
+            try:
+                import datetime as _dts2
+                _h2 = _dts2.date.today()
+                _ms2 = f"{_h2.month:02d}"; _ys2 = str(_h2.year)
+                _tsk = self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM shaken WHERE data_registro LIKE ? AND valor IS NOT NULL",
+                    (f"%/{_ms2}/{_ys2}",)).fetchone()[0]
+                self._dash_sk_kpi_lbl.configure(text=f"¥ {int(_tsk or 0):,}")
+            except Exception: pass
+
         for w in self._dash_serv_rows.winfo_children():
             w.destroy()
         servicos = [dict(r) for r in self.conn.execute(
@@ -7893,7 +9143,7 @@ class KMCars(tk.Tk):
                      state="readonly", font=("Helvetica",8), width=9
                      ).pack(side="left", padx=(2,0), ipady=2)
         self._dash_parc_status.trace_add("write", lambda *_: self._refresh_dash_parcelas())
-        tk.Button(fb, text="↺", font=("Helvetica",9,"bold"),
+        tk.Button(fb, text="↺ Atualizar", font=("Helvetica",9,"bold"),
                   bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
                   command=self._refresh_dash_parcelas
                   ).pack(side="right", ipady=3, padx=(0,4))
@@ -8253,14 +9503,13 @@ class KMCars(tk.Tk):
 
         # ── Tabela dual-canvas (header fixo + body scroll) ──────────────────────
         SV_COLS = [
-            ("Urgência",   88),
-            ("SK",         65),
-            ("Carro",     130),
-            ("Tipo",       65),
-            ("Cliente",   115),
-            ("Vencimento", 92),
-            ("Dias",       80),
-            ("Custo SK",   85),
+            ("Urgência",   90),
+            ("SK",         70),
+            ("Carro",     140),
+            ("Tipo",       70),
+            ("Cliente",   120),
+            ("Vencimento", 95),
+            ("Dias",       85),
         ]
         self._sv_cols = SV_COLS
         SV_TOTAL_W = sum(c[1] for c in SV_COLS)
@@ -8469,15 +9718,6 @@ class KMCars(tk.Tk):
             urg_txt, urg_cor = _urgencia(delta)
             dias_txt = f"{abs(delta)}d {'atrás' if delta < 0 else 'restantes'}"
 
-            try:
-                csk = self.conn.execute(
-                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
-                    "FROM custos_sk WHERE shaken_id=?", (r["id"],)).fetchone()
-                csk_v = int(csk[0]) if csk[0] else 0
-                csk_txt = f"¥ {csk_v:,}" if csk_v else "—"
-            except Exception:
-                csk_txt = "—"
-
             cell(i, 0, urg_txt,                              urg_cor,               bold=True,  bg=rb)
             cell(i, 1, r.get("sk_num") or f"#{r['id']}",    "#D4AC0D",             bold=False, bg=rb)
             cell(i, 2, (r.get("c_nome") or "—")[:18],       COLORS["text_primary"],bold=False, bg=rb)
@@ -8485,7 +9725,6 @@ class KMCars(tk.Tk):
             cell(i, 4, (r.get("cli_nome") or "—")[:16],     COLORS["accent"],      bold=False, bg=rb)
             cell(i, 5, r.get("data_vencimento") or "—",     urg_cor,               bold=True,  bg=rb)
             cell(i, 6, dias_txt,                             urg_cor,               bold=True,  bg=rb)
-            cell(i, 7, csk_txt,                              COLORS["orange"],      bold=False, bg=rb)
 
         # linha final urgentes
         tk.Frame(self._sv_rows_frame, bg=COLORS["border"], height=1
@@ -8742,24 +9981,28 @@ class KMCars(tk.Tk):
             W = cv.winfo_width() or 280
             H = cv.winfo_height() or 280
             cx, cy = W//2, H//2
-            R = min(W, H)//2 - 20
-            start = -90.0
+            R = min(W, H)//2 - 18
+            start = 90.0   # começa no topo (tkinter: 90° = topo, cresce anti-horário)
             for tipo, cor in TIPOS_REC:
                 val = valores[tipo]
                 if val <= 0: continue
-                pct   = val / total_div
+                pct    = val / total_div
                 extent = pct * 360.0
+                # tkinter arc: start em graus, extent positivo = anti-horário
                 cv.create_arc(cx-R, cy-R, cx+R, cy+R,
                               start=start, extent=extent,
                               fill=cor, outline=COLORS["bg_card"], width=2)
-                mid = math.radians(start + extent/2)
-                tx = cx + (R*0.65)*math.cos(mid)
-                ty = cy + (R*0.65)*math.sin(mid)
-                if pct > 0.04:
+                # ângulo do meio da fatia em radianos (tkinter: 0=leste, positivo=anti-horário)
+                # converter para radianos com eixo Y invertido do canvas
+                mid_deg = start + extent / 2
+                mid_rad = math.radians(mid_deg)
+                tx = cx + (R * 0.68) * math.cos(mid_rad)
+                ty = cy - (R * 0.68) * math.sin(mid_rad)   # Y invertido
+                if pct > 0.05:
                     cv.create_text(tx, ty, text=f"{pct*100:.1f}%",
                                    font=("Helvetica",8,"bold"), fill="white")
                 start += extent
-            ri = R * 0.38
+            ri = R * 0.36
             cv.create_oval(cx-ri, cy-ri, cx+ri, cy+ri,
                            fill=COLORS["bg_card"], outline="")
             cv.create_text(cx, cy-7, text=f"¥{total_geral:,}",
@@ -8953,28 +10196,34 @@ class KMCars(tk.Tk):
             W2 = cv2.winfo_width() or 280
             H2 = cv2.winfo_height() or 280
             cx2, cy2 = W2//2, H2//2
-            R2 = min(W2, H2)//2 - 20
-            start2 = -90.0
+            R2 = min(W2, H2)//2 - 18
 
             # Só fatias positivas para a pizza
             pos_total = sum(v for v in valores_luc.values() if v > 0) or 1
-            for tipo, cor in TIPOS_LUC:
-                val = valores_luc[tipo]
-                if val <= 0: continue
-                pct2   = val / pos_total
-                extent2 = pct2 * 360.0
-                cv2.create_arc(cx2-R2, cy2-R2, cx2+R2, cy2+R2,
-                               start=start2, extent=extent2,
-                               fill=cor, outline=COLORS["bg_card"], width=2)
-                mid2 = math.radians(start2 + extent2/2)
-                tx2 = cx2 + (R2*0.65)*math.cos(mid2)
-                ty2 = cy2 + (R2*0.65)*math.sin(mid2)
-                if pct2 > 0.04:
-                    cv2.create_text(tx2, ty2, text=f"{pct2*100:.1f}%",
-                                    font=("Helvetica",8,"bold"), fill="white")
-                start2 += extent2
+            has_positive = any(v > 0 for v in valores_luc.values())
+            if not has_positive:
+                cv2.create_text(cx2, cy2, text="Sem lucro positivo",
+                                font=("Helvetica",9), fill=COLORS["text_muted"])
+            else:
+                start2 = 90.0
+                for tipo, cor in TIPOS_LUC:
+                    val = valores_luc[tipo]
+                    if val <= 0: continue
+                    pct2    = val / pos_total
+                    extent2 = pct2 * 360.0
+                    cv2.create_arc(cx2-R2, cy2-R2, cx2+R2, cy2+R2,
+                                   start=start2, extent=extent2,
+                                   fill=cor, outline=COLORS["bg_card"], width=2)
+                    mid2_deg = start2 + extent2 / 2
+                    mid2_rad = math.radians(mid2_deg)
+                    tx2 = cx2 + (R2 * 0.68) * math.cos(mid2_rad)
+                    ty2 = cy2 - (R2 * 0.68) * math.sin(mid2_rad)
+                    if pct2 > 0.05:
+                        cv2.create_text(tx2, ty2, text=f"{pct2*100:.1f}%",
+                                        font=("Helvetica",8,"bold"), fill="white")
+                    start2 += extent2
 
-            ri2 = R2 * 0.38
+            ri2 = R2 * 0.36
             cv2.create_oval(cx2-ri2, cy2-ri2, cx2+ri2, cy2+ri2,
                             fill=COLORS["bg_card"], outline="")
             total_color = COLORS["green"] if total_lucro >= 0 else COLORS["red"]
@@ -9120,6 +10369,9 @@ class KMCars(tk.Tk):
 
         tk.Label(hdr, text="📋  Relatório Mensal", font=("Helvetica",14,"bold"),
                  bg=COLORS["bg_content"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(hdr, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=lambda: _refresh()).pack(side="left", padx=(10,0))
 
         self._rm_mes = tk.IntVar(value=hoje.month)
         self._rm_ano = tk.IntVar(value=hoje.year)
@@ -9275,6 +10527,22 @@ class KMCars(tk.Tk):
                 if cr2:
                     cr2d = dict(cr2)
                     custo_v += _int(cr2d.get("valor")) + self._get_custo_total(cr2d["id"])
+            # IS de Vendas CNF (em custos da compra)
+            is_v = 0
+            for v in vendas:
+                if (v.get("nfi") or "SNF") != "CNF": continue
+                cid2 = v.get("compra_id") or None
+                if not cid2 and v.get("carro_id"):
+                    cr2b = self.conn.execute(
+                        "SELECT id FROM compras WHERE carro_id=? ORDER BY id DESC LIMIT 1",
+                        (v["carro_id"],)).fetchone()
+                    cid2 = cr2b[0] if cr2b else None
+                if not cid2: continue
+                ri_is = self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM custos WHERE compra_id=? AND tipo_custo='IS'", (cid2,)).fetchone()
+                is_v += int(ri_is[0]) if ri_is[0] else 0
+            custo_v_sem = custo_v - is_v
             lucro_v = receita_v - custo_v
             marg_v  = (lucro_v / receita_v * 100) if receita_v else 0
 
@@ -9289,6 +10557,13 @@ class KMCars(tk.Tk):
                     "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
                     "FROM custos_os WHERE servico_id=?", (r["id"],)).fetchone()[0]
                 for r in os_rows)
+            is_os = sum(
+                self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM custos_os WHERE servico_id=? AND tipo_custo='IS'", (r["id"],)
+                ).fetchone()[0] or 0
+                for r in os_rows)
+            custo_os_sem = custo_os - is_os
             lucro_os = receita_os - custo_os
             marg_os  = (lucro_os / receita_os * 100) if receita_os else 0
 
@@ -9306,6 +10581,13 @@ class KMCars(tk.Tk):
                     "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
                     "FROM custos_sk WHERE shaken_id=?", (r["id"],)).fetchone()[0]
                 for r in sk_rows)
+            is_sk = sum(
+                self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM custos_sk WHERE shaken_id=? AND tipo_custo='IS'", (r["id"],)
+                ).fetchone()[0] or 0
+                for r in sk_rows)
+            custo_sk_sem = custo_sk - is_sk
             lucro_sk = receita_sk - custo_sk
             marg_sk  = (lucro_sk / receita_sk * 100) if receita_sk else 0
 
@@ -9325,9 +10607,11 @@ class KMCars(tk.Tk):
             total_parc = sum(_int(r.get("valor_pago")) for r in parc_rows)
 
             # ── RESUMO ───────────────────────────────────────────────────────
+            is_total    = is_v + is_os + is_sk
             lucro_bruto = lucro_v + lucro_os + lucro_sk
             lucro_liq   = lucro_bruto - total_desp
             receita_tot = receita_v + receita_os + receita_sk
+            custo_sem_tot = custo_v_sem + custo_os_sem + custo_sk_sem
             marg_geral  = (lucro_liq / receita_tot * 100) if receita_tot else 0
 
             # ── FLUXO DE CAIXA ───────────────────────────────────────────────
@@ -9338,7 +10622,9 @@ class KMCars(tk.Tk):
                               and _int(v.get("entrada"))]
             fc_entradas      = sum(_int(v.get("entrada")) for v in vendas_entrada)
             fc_volta         = sum(_int(v.get("volta_paga")) for v in vendas
-                                   if v.get("tipo_venda") == "Troca" and _int(v.get("volta_paga")) > 0)
+                                   if _int(v.get("volta_paga")) > 0)
+            fc_valor_troca   = sum(_int(v.get("valor_troca")) for v in vendas
+                                   if _int(v.get("valor_troca")) > 0)
             fc_parcelas      = total_parc
             fc_os            = receita_os
             fc_sk            = receita_sk
@@ -9361,7 +10647,7 @@ class KMCars(tk.Tk):
                     (r["id"], pattern)).fetchone()[0]
                 for r in sk_rows)
             fc_despesas      = total_desp
-            fc_total_saida   = fc_despesas + fc_compras + fc_custos_entrada + fc_custos_os + fc_custos_sk
+            fc_total_saida   = fc_despesas + fc_compras + fc_custos_entrada + fc_custos_os + fc_custos_sk + fc_valor_troca
             fc_saldo         = fc_total_entrada - fc_total_saida
             fc_cor           = COLORS["green"] if fc_saldo >= 0 else COLORS["red"]
 
@@ -9374,31 +10660,37 @@ class KMCars(tk.Tk):
             # ── Vendas ──
             sec_hdr("◆  VENDAS", G)
             kpi_row([
-                ("Qtd",     str(len(vendas)),       COLORS["text_primary"]),
-                ("Receita", f"¥{receita_v:,}",      G),
-                ("Custo",   f"¥{custo_v:,}",        O),
-                ("Lucro",   f"¥{lucro_v:,}",        G if lucro_v>=0 else R),
-                ("Margem",  f"{marg_v:.1f}%",       AC),
+                ("Qtd",        str(len(vendas)),       COLORS["text_primary"]),
+                ("Receita",    f"¥{receita_v:,}",      G),
+                ("Custo s/IS", f"¥{custo_v_sem:,}",    O),
+                ("IS (CNF)",   f"¥{is_v:,}",           "#8E44AD"),
+                ("C. Total",   f"¥{custo_v:,}",        COLORS["red"]),
+                ("Lucro",      f"¥{lucro_v:,}",        G if lucro_v>=0 else R),
+                ("Margem",     f"{marg_v:.1f}%",       AC),
             ])
 
             # ── OS ──
             sec_hdr("⚙  ORDENS DE SERVIÇO", COLORS["blue"])
             kpi_row([
-                ("Qtd",     str(len(os_rows)),      COLORS["text_primary"]),
-                ("Receita", f"¥{receita_os:,}",     COLORS["blue"]),
-                ("Custo",   f"¥{custo_os:,}",       O),
-                ("Lucro",   f"¥{lucro_os:,}",       G if lucro_os>=0 else R),
-                ("Margem",  f"{marg_os:.1f}%",      AC),
+                ("Qtd",        str(len(os_rows)),      COLORS["text_primary"]),
+                ("Receita",    f"¥{receita_os:,}",     COLORS["blue"]),
+                ("Custo s/IS", f"¥{custo_os_sem:,}",   O),
+                ("IS (CNF)",   f"¥{is_os:,}",          "#8E44AD"),
+                ("C. Total",   f"¥{custo_os:,}",       COLORS["red"]),
+                ("Lucro",      f"¥{lucro_os:,}",       G if lucro_os>=0 else R),
+                ("Margem",     f"{marg_os:.1f}%",      AC),
             ])
 
             # ── Shaken ──
             sec_hdr("🔔  SHAKEN", "#D4AC0D")
             kpi_row([
-                ("Qtd",     str(len(sk_rows)),      COLORS["text_primary"]),
-                ("Receita", f"¥{receita_sk:,}",     "#D4AC0D"),
-                ("Custo",   f"¥{custo_sk:,}",       O),
-                ("Lucro",   f"¥{lucro_sk:,}",       G if lucro_sk>=0 else R),
-                ("Margem",  f"{marg_sk:.1f}%",      AC),
+                ("Qtd",        str(len(sk_rows)),      COLORS["text_primary"]),
+                ("Receita",    f"¥{receita_sk:,}",     "#D4AC0D"),
+                ("Custo s/IS", f"¥{custo_sk_sem:,}",   O),
+                ("IS (CNF)",   f"¥{is_sk:,}",          "#8E44AD"),
+                ("C. Total",   f"¥{custo_sk:,}",       COLORS["red"]),
+                ("Lucro",      f"¥{lucro_sk:,}",       G if lucro_sk>=0 else R),
+                ("Margem",     f"{marg_sk:.1f}%",      AC),
             ])
 
             # ── Despesas + Parcelas ──
@@ -9503,6 +10795,8 @@ class KMCars(tk.Tk):
             sec_hdr("📊  RESUMO CONSOLIDADO", COLORS["text_primary"])
             kpi_row([
                 ("Receita Total",  f"¥{receita_tot:,}",    G),
+                ("Custo s/IS",     f"¥{custo_sem_tot:,}",  O),
+                ("IS Total",       f"¥{is_total:,}",       "#8E44AD"),
                 ("Lucro Bruto",    f"¥{lucro_bruto:,}",    G if lucro_bruto>=0 else R),
                 ("(-) Despesas",   f"¥{total_desp:,}",     R),
                 ("Lucro Líquido",  f"¥{lucro_liq:,}",      G if lucro_liq>=0 else R),
@@ -9548,7 +10842,7 @@ class KMCars(tk.Tk):
             ent_items = [
                 ("Vendas à Vista",          f"¥{fc_vendas_avista:,}"),
                 ("Entradas financ./troca",  f"¥{fc_entradas:,}"),
-                ("Volta de Troca",          f"¥{fc_volta:,}"),
+                ("Volta de Troca recebida", f"¥{fc_volta:,}"),
                 ("Parcelas pagas",          f"¥{fc_parcelas:,}"),
                 ("Receita OS",              f"¥{fc_os:,}"),
                 ("Receita Shaken",          f"¥{fc_sk:,}"),
@@ -9556,6 +10850,7 @@ class KMCars(tk.Tk):
             sai_items = [
                 ("Compras de Carros",   f"¥{fc_compras:,}"),
                 ("Custos de Entrada",   f"¥{fc_custos_entrada:,}"),
+                ("Valor de Troca",      f"¥{fc_valor_troca:,}"),
                 ("Custos de OS",        f"¥{fc_custos_os:,}"),
                 ("Custos de Shaken",    f"¥{fc_custos_sk:,}"),
                 ("Despesas Fixas",      f"¥{fc_despesas:,}"),
@@ -9604,9 +10899,13 @@ class KMCars(tk.Tk):
                 "desp_rows": desp_rows, "total_desp": total_desp,
                 "parc_rows": parc_rows, "total_parc": total_parc,
                 "receita_tot": receita_tot,
+                "custo_v_sem": custo_v_sem, "is_v": is_v,
+                "custo_os_sem": custo_os_sem, "is_os": is_os,
+                "custo_sk_sem": custo_sk_sem, "is_sk": is_sk,
+                "is_total": is_total, "custo_sem_tot": custo_sem_tot,
                 "lucro_bruto": lucro_bruto, "lucro_liq": lucro_liq, "marg_geral": marg_geral,
                 "fc_vendas_avista": fc_vendas_avista, "fc_entradas": fc_entradas,
-                "fc_volta": fc_volta, "fc_parcelas": fc_parcelas,
+                "fc_volta": fc_volta, "fc_valor_troca": fc_valor_troca, "fc_parcelas": fc_parcelas,
                 "fc_os": fc_os, "fc_sk": fc_sk, "fc_total_entrada": fc_total_entrada,
                 "fc_compras": fc_compras, "fc_custos_entrada": fc_custos_entrada,
                 "fc_custos_os": fc_custos_os, "fc_custos_sk": fc_custos_sk,
@@ -9697,26 +10996,33 @@ class KMCars(tk.Tk):
                 story.append(tbl)
                 story.append(Spacer(1, 0.25*cm))
 
+            PURPLE = rl_colors.HexColor("#8E44AD")
             kpi_table("VENDAS", GREEN, [
-                ("Qtd",    str(len(d.get("vendas",[]))),       DARK),
-                ("Receita",f"Y {d.get('receita_v',0):,}",      GREEN),
-                ("Custo",  f"Y {d.get('custo_v',0):,}",        ORANGE),
-                ("Lucro",  f"Y {d.get('lucro_v',0):,}",        GREEN if d.get('lucro_v',0)>=0 else RED),
-                ("Margem", f"{d.get('marg_v',0):.1f}%",        BLUE),
+                ("Qtd",       str(len(d.get("vendas",[]))),             DARK),
+                ("Receita",   f"Y {d.get('receita_v',0):,}",            GREEN),
+                ("Custo s/IS",f"Y {d.get('custo_v_sem',0):,}",          ORANGE),
+                ("IS (CNF)",  f"Y {d.get('is_v',0):,}",                 PURPLE),
+                ("C. Total",  f"Y {d.get('custo_v',0):,}",              RED),
+                ("Lucro",     f"Y {d.get('lucro_v',0):,}",              GREEN if d.get('lucro_v',0)>=0 else RED),
+                ("Margem",    f"{d.get('marg_v',0):.1f}%",              BLUE),
             ])
             kpi_table("ORDENS DE SERVICO", BLUE, [
-                ("Qtd",    str(len(d.get("os_rows",[]))),       DARK),
-                ("Receita",f"Y {d.get('receita_os',0):,}",      BLUE),
-                ("Custo",  f"Y {d.get('custo_os',0):,}",        ORANGE),
-                ("Lucro",  f"Y {d.get('lucro_os',0):,}",        GREEN if d.get('lucro_os',0)>=0 else RED),
-                ("Margem", f"{d.get('marg_os',0):.1f}%",        BLUE),
+                ("Qtd",       str(len(d.get("os_rows",[]))),             DARK),
+                ("Receita",   f"Y {d.get('receita_os',0):,}",            BLUE),
+                ("Custo s/IS",f"Y {d.get('custo_os_sem',0):,}",          ORANGE),
+                ("IS (CNF)",  f"Y {d.get('is_os',0):,}",                 PURPLE),
+                ("C. Total",  f"Y {d.get('custo_os',0):,}",              RED),
+                ("Lucro",     f"Y {d.get('lucro_os',0):,}",              GREEN if d.get('lucro_os',0)>=0 else RED),
+                ("Margem",    f"{d.get('marg_os',0):.1f}%",              BLUE),
             ])
             kpi_table("SHAKEN", GOLD, [
-                ("Qtd",    str(len(d.get("sk_rows",[]))),       DARK),
-                ("Receita",f"Y {d.get('receita_sk',0):,}",      GOLD),
-                ("Custo",  f"Y {d.get('custo_sk',0):,}",        ORANGE),
-                ("Lucro",  f"Y {d.get('lucro_sk',0):,}",        GREEN if d.get('lucro_sk',0)>=0 else RED),
-                ("Margem", f"{d.get('marg_sk',0):.1f}%",        BLUE),
+                ("Qtd",       str(len(d.get("sk_rows",[]))),             DARK),
+                ("Receita",   f"Y {d.get('receita_sk',0):,}",            GOLD),
+                ("Custo s/IS",f"Y {d.get('custo_sk_sem',0):,}",          ORANGE),
+                ("IS (CNF)",  f"Y {d.get('is_sk',0):,}",                 PURPLE),
+                ("C. Total",  f"Y {d.get('custo_sk',0):,}",              RED),
+                ("Lucro",     f"Y {d.get('lucro_sk',0):,}",              GREEN if d.get('lucro_sk',0)>=0 else RED),
+                ("Margem",    f"{d.get('marg_sk',0):.1f}%",              BLUE),
             ])
             cart_inadimp_v = d.get('cart_inadimp', 0)
             cart_saldo_v   = d.get('cart_saldo_devedor', 0)
@@ -9737,11 +11043,13 @@ class KMCars(tk.Tk):
             story.append(HRFlowable(width="100%", thickness=0.5, color=GRAY))
             story.append(Spacer(1, 0.1*cm))
             kpi_table("RESUMO CONSOLIDADO", DARK, [
-                ("Receita Total", f"Y {d.get('receita_tot',0):,}",  GREEN),
-                ("Lucro Bruto",   f"Y {d.get('lucro_bruto',0):,}",  GREEN if d.get('lucro_bruto',0)>=0 else RED),
-                ("(-) Despesas",  f"Y {d.get('total_desp',0):,}",   RED),
-                ("Lucro Liquido", f"Y {d.get('lucro_liq',0):,}",    GREEN if d.get('lucro_liq',0)>=0 else RED),
-                ("Margem Geral",  f"{d.get('marg_geral',0):.1f}%",  BLUE),
+                ("Receita Total", f"Y {d.get('receita_tot',0):,}",      GREEN),
+                ("Custo s/IS",    f"Y {d.get('custo_sem_tot',0):,}",    ORANGE),
+                ("IS Total",      f"Y {d.get('is_total',0):,}",         PURPLE),
+                ("Lucro Bruto",   f"Y {d.get('lucro_bruto',0):,}",      GREEN if d.get('lucro_bruto',0)>=0 else RED),
+                ("(-) Despesas",  f"Y {d.get('total_desp',0):,}",       RED),
+                ("Lucro Liquido", f"Y {d.get('lucro_liq',0):,}",        GREEN if d.get('lucro_liq',0)>=0 else RED),
+                ("Margem Geral",  f"{d.get('marg_geral',0):.1f}%",      BLUE),
             ])
 
             # ── Fluxo de Caixa — 2 colunas reais ──────────────────────────
@@ -9757,7 +11065,7 @@ class KMCars(tk.Tk):
             ent_items_pdf = [
                 ("Vendas a Vista",         f"Y {d.get('fc_vendas_avista',0):,}"),
                 ("Entradas financ./troca", f"Y {d.get('fc_entradas',0):,}"),
-                ("Volta de Troca",         f"Y {d.get('fc_volta',0):,}"),
+                ("Volta de Troca recebida",f"Y {d.get('fc_volta',0):,}"),
                 ("Parcelas pagas",         f"Y {d.get('fc_parcelas',0):,}"),
                 ("Receita OS",             f"Y {d.get('fc_os',0):,}"),
                 ("Receita Shaken",         f"Y {d.get('fc_sk',0):,}"),
@@ -9765,6 +11073,7 @@ class KMCars(tk.Tk):
             sai_items_pdf = [
                 ("Compras de Carros",  f"Y {d.get('fc_compras',0):,}"),
                 ("Custos de Entrada",  f"Y {d.get('fc_custos_entrada',0):,}"),
+                ("Valor de Troca",     f"Y {d.get('fc_valor_troca',0):,}"),
                 ("Custos de OS",       f"Y {d.get('fc_custos_os',0):,}"),
                 ("Custos de Shaken",   f"Y {d.get('fc_custos_sk',0):,}"),
                 ("Despesas Fixas",     f"Y {d.get('fc_despesas',0):,}"),
@@ -9870,6 +11179,576 @@ class KMCars(tk.Tk):
                 pass
         _refresh()
 
+    def _build_relatorio_anual(self, parent):
+        """Relatório anual consolidado com exportação PDF."""
+        import datetime
+        hoje = datetime.date.today()
+
+        root = tk.Frame(parent, bg=COLORS["bg_content"])
+        root.pack(fill="both", expand=True, padx=18, pady=14)
+
+        # ── Cabeçalho + navegação ────────────────────────────────────────────
+        hdr = tk.Frame(root, bg=COLORS["bg_content"])
+        hdr.pack(fill="x", pady=(0, 12))
+
+        tk.Label(hdr, text="📅  Relatório Anual", font=("Helvetica",14,"bold"),
+                 bg=COLORS["bg_content"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(hdr, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=lambda: _refresh()).pack(side="left", padx=(10,0))
+
+        self._ra_ano = tk.IntVar(value=hoje.year)
+
+        nav = tk.Frame(hdr, bg=COLORS["bg_content"])
+        nav.pack(side="right")
+
+        self._ra_lbl_ano = tk.Label(nav, text=str(hoje.year),
+            font=("Helvetica",13,"bold"), width=8,
+            bg=COLORS["bg_content"], fg=COLORS["text_primary"])
+
+        def _prev():
+            self._ra_ano.set(self._ra_ano.get() - 1)
+            self._ra_lbl_ano.configure(text=str(self._ra_ano.get()))
+            _refresh()
+
+        def _next():
+            self._ra_ano.set(self._ra_ano.get() + 1)
+            self._ra_lbl_ano.configure(text=str(self._ra_ano.get()))
+            _refresh()
+
+        tk.Button(nav, text="◀", font=("Helvetica",11,"bold"),
+                  bg=COLORS["bg_card"], fg=COLORS["accent"],
+                  relief="flat", cursor="hand2", padx=8,
+                  command=_prev).pack(side="left", ipady=3)
+        self._ra_lbl_ano.pack(side="left", padx=4)
+        tk.Button(nav, text="▶", font=("Helvetica",11,"bold"),
+                  bg=COLORS["bg_card"], fg=COLORS["accent"],
+                  relief="flat", cursor="hand2", padx=8,
+                  command=_next).pack(side="left")
+        tk.Button(nav, text="📄  Exportar PDF", font=("Helvetica",9,"bold"),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=10, pady=4, command=lambda: _exportar_pdf()
+                  ).pack(side="left", padx=(16,0), ipady=2)
+
+        # ── Container scrollável ─────────────────────────────────────────────
+        outer = tk.Frame(root, bg=COLORS["bg_content"])
+        outer.pack(fill="both", expand=True)
+        vsb = tk.Scrollbar(outer, orient="vertical")
+        cv  = tk.Canvas(outer, bg=COLORS["bg_content"], highlightthickness=0,
+                        yscrollcommand=vsb.set)
+        vsb.configure(command=cv.yview)
+        vsb.pack(side="right", fill="y")
+        cv.pack(side="left", fill="both", expand=True)
+        self._ra_inner = tk.Frame(cv, bg=COLORS["bg_content"])
+        cw = cv.create_window((0,0), window=self._ra_inner, anchor="nw")
+        self._ra_inner.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.bind("<Configure>", lambda e: cv.itemconfig(cw, width=e.width))
+        cv.bind("<Enter>", lambda e: cv.bind_all("<MouseWheel>",
+            lambda ev: cv.yview_scroll(int(-1*(ev.delta/120)),"units")))
+        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+
+        # ── Layout helpers ───────────────────────────────────────────────────
+        def sec_hdr(txt, color=COLORS["blue"]):
+            row = tk.Frame(self._ra_inner, bg=COLORS["bg_content"])
+            row.pack(fill="x", pady=(10,1))
+            tk.Frame(row, bg=color, width=4, height=18).pack(side="left", padx=(0,6))
+            tk.Label(row, text=txt, font=("Helvetica",9,"bold"),
+                     bg=COLORS["bg_content"], fg=color).pack(side="left")
+
+        def kpi_row(items):
+            row = tk.Frame(self._ra_inner, bg=COLORS["bg_card"],
+                           highlightthickness=1, highlightbackground=COLORS["border"])
+            row.pack(fill="x", pady=(2,0))
+            for i, (lbl, val, cor) in enumerate(items):
+                if i > 0:
+                    tk.Frame(row, bg=COLORS["border"], width=1).pack(side="left", fill="y", pady=4)
+                cell = tk.Frame(row, bg=COLORS["bg_card"])
+                cell.pack(side="left", expand=True, fill="x", padx=8, pady=5)
+                tk.Label(cell, text=lbl, font=("Helvetica",7),
+                         bg=COLORS["bg_card"], fg=COLORS["text_muted"], anchor="w").pack(anchor="w")
+                tk.Label(cell, text=val, font=("Helvetica",10,"bold"),
+                         bg=COLORS["bg_card"], fg=cor, anchor="w").pack(anchor="w")
+
+        def _int(s):
+            try: return int(str(s or "0").replace(",",""))
+            except: return 0
+
+        self._ra_data_cache = {}
+
+        MESES_PT = ["Jan","Fev","Mar","Abr","Mai","Jun",
+                    "Jul","Ago","Set","Out","Nov","Dez"]
+
+        def _refresh():
+            for w in self._ra_inner.winfo_children():
+                w.destroy()
+
+            a = self._ra_ano.get()
+            ys = str(a)
+
+            # ── Busca todos os meses do ano ──────────────────────────────────
+            receita_v_tot = custo_v_tot = is_v_tot = 0
+            receita_os_tot = custo_os_tot = is_os_tot = 0
+            receita_sk_tot = custo_sk_tot = is_sk_tot = 0
+            total_desp_tot = 0
+            cnt_v = cnt_os = cnt_sk = 0
+            mensal = []  # (mes, rec_v, rec_os, rec_sk, lucro_tot)
+
+            for m in range(1, 13):
+                ms = f"{m:02d}"
+                pattern = f"%/{ms}/{ys}"
+
+                # Vendas
+                vendas_m = [dict(r) for r in self.conn.execute(
+                    "SELECT v.*, ca.carro as carro, ca.ano as c_ano, ca.placa as c_placa, "
+                    "ca.cor as c_cor, cl.nome as cli_nome "
+                    "FROM vendas v "
+                    "LEFT JOIN carros ca ON v.carro_id=ca.id "
+                    "LEFT JOIN clientes cl ON v.cliente_id=cl.id "
+                    "WHERE v.data_venda LIKE ?", (pattern,)).fetchall()]
+                cnt_v += len(vendas_m)
+                for v in vendas_m:
+                    receita_v_tot += _int(v.get("valor_venda"))
+                    cid2 = v.get("compra_id")
+                    if not cid2 and v.get("carro_id"):
+                        cr2 = self.conn.execute(
+                            "SELECT id FROM compras WHERE carro_id=? ORDER BY id DESC LIMIT 1",
+                            (v["carro_id"],)).fetchone()
+                        cid2 = cr2[0] if cr2 else None
+                    if cid2:
+                        custo_v_tot += _int(self.conn.execute(
+                            "SELECT valor FROM compras WHERE id=?", (cid2,)).fetchone()[0] if
+                            self.conn.execute("SELECT valor FROM compras WHERE id=?", (cid2,)).fetchone() else 0)
+                        custo_v_tot += self._get_custo_total(cid2)
+                        ri_is2 = self.conn.execute(
+                            "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                            "FROM custos WHERE compra_id=? AND tipo_custo='IS'", (cid2,)).fetchone()
+                        is_v_tot += int(ri_is2[0]) if ri_is2[0] else 0
+
+                # OS
+                os_m = [dict(r) for r in self.conn.execute(
+                    "SELECT * FROM servicos WHERE data_servico LIKE ?", (pattern,)).fetchall()]
+                cnt_os += len(os_m)
+                for r in os_m:
+                    receita_os_tot += _int(r.get("valor"))
+                    custo_os_tot += self.conn.execute(
+                        "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                        "FROM custos_os WHERE servico_id=?", (r["id"],)).fetchone()[0] or 0
+                    is_os_tot += self.conn.execute(
+                        "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                        "FROM custos_os WHERE servico_id=? AND tipo_custo='IS'", (r["id"],)).fetchone()[0] or 0
+
+                # Shaken
+                sk_m = [dict(r) for r in self.conn.execute(
+                    "SELECT * FROM shaken WHERE data_registro LIKE ? AND valor IS NOT NULL AND valor != ''",
+                    (pattern,)).fetchall()]
+                cnt_sk += len(sk_m)
+                for r in sk_m:
+                    receita_sk_tot += _int(r.get("valor"))
+                    custo_sk_tot += self.conn.execute(
+                        "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                        "FROM custos_sk WHERE shaken_id=?", (r["id"],)).fetchone()[0] or 0
+                    is_sk_tot += self.conn.execute(
+                        "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                        "FROM custos_sk WHERE shaken_id=? AND tipo_custo='IS'", (r["id"],)).fetchone()[0] or 0
+
+                # Despesas fixas do mês
+                mes_ref_m = f"{ms}/{ys}"
+                desp_m = self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM despesas_fixas WHERE data_ref=? OR recorrente=1", (mes_ref_m,)).fetchone()[0] or 0
+                total_desp_tot += _int(desp_m)
+
+                rec_m = receita_v_tot  # running totals não servem por mês, recompute
+                luc_m = (_int(self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor_venda,',','') AS INTEGER)),0) "
+                    "FROM vendas WHERE data_venda LIKE ?", (pattern,)).fetchone()[0])
+                    + _int(self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM servicos WHERE data_servico LIKE ?", (pattern,)).fetchone()[0])
+                    + _int(self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM shaken WHERE data_registro LIKE ? AND valor IS NOT NULL", (pattern,)).fetchone()[0]))
+                mensal.append((MESES_PT[m-1], luc_m))
+
+            # Totais derivados
+            is_total        = is_v_tot + is_os_tot + is_sk_tot
+            custo_v_sem     = custo_v_tot - is_v_tot
+            custo_os_sem    = custo_os_tot - is_os_tot
+            custo_sk_sem    = custo_sk_tot - is_sk_tot
+            custo_sem_tot   = custo_v_sem + custo_os_sem + custo_sk_sem
+            lucro_v         = receita_v_tot - custo_v_tot
+            lucro_os        = receita_os_tot - custo_os_tot
+            lucro_sk        = receita_sk_tot - custo_sk_tot
+            receita_tot     = receita_v_tot + receita_os_tot + receita_sk_tot
+            lucro_bruto     = lucro_v + lucro_os + lucro_sk
+            lucro_liq       = lucro_bruto - total_desp_tot
+            marg_v          = (lucro_v / receita_v_tot * 100) if receita_v_tot else 0
+            marg_os         = (lucro_os / receita_os_tot * 100) if receita_os_tot else 0
+            marg_sk         = (lucro_sk / receita_sk_tot * 100) if receita_sk_tot else 0
+            marg_geral      = (lucro_liq / receita_tot * 100) if receita_tot else 0
+
+            G = COLORS["green"]; R = COLORS["red"]
+            O = COLORS["orange"]; AC = COLORS["accent"]
+            P_ = "#8E44AD"
+
+            # ── Vendas ──
+            sec_hdr(f"◆  VENDAS  ({cnt_v} vendas)", G)
+            kpi_row([
+                ("Receita",    f"¥{receita_v_tot:,}",  G),
+                ("Custo s/IS", f"¥{custo_v_sem:,}",    O),
+                ("IS (CNF)",   f"¥{is_v_tot:,}",       P_),
+                ("C. Total",   f"¥{custo_v_tot:,}",    COLORS["red"]),
+                ("Lucro",      f"¥{lucro_v:,}",        G if lucro_v>=0 else R),
+                ("Margem",     f"{marg_v:.1f}%",       AC),
+            ])
+
+            # ── OS ──
+            sec_hdr(f"⚙  ORDENS DE SERVIÇO  ({cnt_os} OS)", COLORS["blue"])
+            kpi_row([
+                ("Receita",    f"¥{receita_os_tot:,}", COLORS["blue"]),
+                ("Custo s/IS", f"¥{custo_os_sem:,}",   O),
+                ("IS (CNF)",   f"¥{is_os_tot:,}",      P_),
+                ("C. Total",   f"¥{custo_os_tot:,}",   COLORS["red"]),
+                ("Lucro",      f"¥{lucro_os:,}",       G if lucro_os>=0 else R),
+                ("Margem",     f"{marg_os:.1f}%",      AC),
+            ])
+
+            # ── Shaken ──
+            sec_hdr(f"🔔  SHAKEN  ({cnt_sk} registros)", "#D4AC0D")
+            kpi_row([
+                ("Receita",    f"¥{receita_sk_tot:,}", "#D4AC0D"),
+                ("Custo s/IS", f"¥{custo_sk_sem:,}",   O),
+                ("IS (CNF)",   f"¥{is_sk_tot:,}",      P_),
+                ("C. Total",   f"¥{custo_sk_tot:,}",   COLORS["red"]),
+                ("Lucro",      f"¥{lucro_sk:,}",       G if lucro_sk>=0 else R),
+                ("Margem",     f"{marg_sk:.1f}%",      AC),
+            ])
+
+            # ── Despesas ──
+            sec_hdr("💸  DESPESAS FIXAS (anual)", R)
+            kpi_row([("Total Ano", f"¥{total_desp_tot:,}", R)])
+
+            # ── Resumo ──
+            sec_hdr("📊  RESUMO CONSOLIDADO DO ANO", COLORS["text_primary"])
+            kpi_row([
+                ("Receita Total",  f"¥{receita_tot:,}",    G),
+                ("Custo s/IS",     f"¥{custo_sem_tot:,}",  O),
+                ("IS Total",       f"¥{is_total:,}",       P_),
+                ("Lucro Bruto",    f"¥{lucro_bruto:,}",    G if lucro_bruto>=0 else R),
+                ("(-) Despesas",   f"¥{total_desp_tot:,}", R),
+                ("Lucro Líquido",  f"¥{lucro_liq:,}",      G if lucro_liq>=0 else R),
+                ("Margem Geral",   f"{marg_geral:.1f}%",   AC),
+            ])
+
+            # ── Gráfico de barras por mês — Receita + Lucro lado a lado ───────
+            # Calcula receita e lucro por mês (12 entradas cada)
+            mensal_rec  = []  # (label, receita_total)
+            mensal_luc  = []  # (label, lucro_bruto)
+            for m_idx in range(1, 13):
+                ms2 = f"{m_idx:02d}"; pat2 = f"%/{ms2}/{ys}"
+                rv  = _int(self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor_venda,',','') AS INTEGER)),0) "
+                    "FROM vendas WHERE data_venda LIKE ?", (pat2,)).fetchone()[0])
+                ros = _int(self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM servicos WHERE data_servico LIKE ?", (pat2,)).fetchone()[0])
+                rsk = _int(self.conn.execute(
+                    "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                    "FROM shaken WHERE data_registro LIKE ? AND valor IS NOT NULL", (pat2,)).fetchone()[0])
+                rec_m = rv + ros + rsk
+
+                # lucro bruto do mês: receita − custos de compra − custos_os − custos_sk
+                lv = 0
+                for vrow in self.conn.execute(
+                        "SELECT valor_venda, compra_id, carro_id FROM vendas WHERE data_venda LIKE ?",
+                        (pat2,)).fetchall():
+                    vv2 = _int(vrow[0])
+                    cid3 = vrow[1]
+                    if not cid3 and vrow[2]:
+                        r3 = self.conn.execute(
+                            "SELECT id FROM compras WHERE carro_id=? ORDER BY id DESC LIMIT 1",
+                            (vrow[2],)).fetchone()
+                        cid3 = r3[0] if r3 else None
+                    if cid3:
+                        vc3 = _int(self.conn.execute(
+                            "SELECT valor FROM compras WHERE id=?", (cid3,)).fetchone()[0]
+                            if self.conn.execute("SELECT valor FROM compras WHERE id=?", (cid3,)).fetchone() else 0)
+                        vv2 -= vc3 + self._get_custo_total(cid3)
+                    lv += vv2
+                los2 = 0
+                for orow in self.conn.execute(
+                        "SELECT id, valor FROM servicos WHERE data_servico LIKE ?", (pat2,)).fetchall():
+                    rv2 = _int(orow[1])
+                    cv2 = self.conn.execute(
+                        "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                        "FROM custos_os WHERE servico_id=?", (orow[0],)).fetchone()[0] or 0
+                    los2 += rv2 - _int(cv2)
+                lsk2 = 0
+                for skrow in self.conn.execute(
+                        "SELECT id, valor FROM shaken WHERE data_registro LIKE ? "
+                        "AND valor IS NOT NULL AND valor != ''", (pat2,)).fetchall():
+                    rv3 = _int(skrow[1])
+                    ck3 = self.conn.execute(
+                        "SELECT COALESCE(SUM(CAST(REPLACE(valor,',','') AS INTEGER)),0) "
+                        "FROM custos_sk WHERE shaken_id=?", (skrow[0],)).fetchone()[0] or 0
+                    lsk2 += rv3 - _int(ck3)
+                luc_m = lv + los2 + lsk2
+
+                mensal_rec.append((MESES_PT[m_idx-1], rec_m))
+                mensal_luc.append((MESES_PT[m_idx-1], luc_m))
+
+            def _make_bar_chart(parent_frame, title, bar_color, dataset, baseline=False):
+                """baseline=True desenha linha zero e barras negativas em vermelho."""
+                hdr_f2 = tk.Frame(parent_frame, bg=COLORS["bg_card"])
+                hdr_f2.pack(fill="x", padx=10, pady=(8,2))
+                tk.Frame(hdr_f2, bg=bar_color, width=4, height=14).pack(side="left", padx=(0,6))
+                tk.Label(hdr_f2, text=title, font=("Helvetica",8,"bold"),
+                         bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+                cv2 = tk.Canvas(parent_frame, bg=COLORS["bg_card"], height=130,
+                                highlightthickness=0)
+                cv2.pack(fill="x", padx=8, pady=(0,8))
+
+                def _draw(event=None):
+                    cv2.delete("all")
+                    W2 = cv2.winfo_width() or 400
+                    vals2 = [d[1] for d in dataset]
+                    max_v2 = max((abs(v) for v in vals2), default=1) or 1
+                    min_v2 = min(vals2) if baseline else 0
+                    span   = max_v2 - min(min_v2, 0)
+                    if span == 0: span = 1
+                    PAD_L, PAD_R, PAD_T, PAD_B = 38, 8, 14, 24
+                    H2 = 130
+                    avail_h = H2 - PAD_T - PAD_B
+                    zero_y  = H2 - PAD_B - int(avail_h * max(0, -min_v2) / span)
+
+                    # grid lines
+                    for pct in [0.5, 1.0]:
+                        gy2 = H2 - PAD_B - int(avail_h * pct * max_v2 / span)
+                        cv2.create_line(PAD_L, gy2, W2 - PAD_R, gy2,
+                                        fill=COLORS["border"], dash=(2,3))
+                        lbl2 = f"¥{int(max_v2*pct)//1000}k" if max_v2 >= 1000 else f"¥{int(max_v2*pct):,}"
+                        cv2.create_text(PAD_L-3, gy2, text=lbl2, anchor="e",
+                                        font=("Helvetica",6), fill=COLORS["text_muted"])
+
+                    # zero line
+                    if baseline and min_v2 < 0:
+                        cv2.create_line(PAD_L, zero_y, W2 - PAD_R, zero_y,
+                                        fill=COLORS["text_muted"], dash=(4,2))
+
+                    n2 = len(dataset)
+                    slot2 = (W2 - PAD_L - PAD_R) / n2
+                    bw2   = max(4, int(slot2 * 0.65))
+                    for i2, (lbl_m, val2) in enumerate(dataset):
+                        xc2 = PAD_L + slot2 * i2 + slot2 / 2
+                        x0b = xc2 - bw2/2; x1b = xc2 + bw2/2
+                        if val2 >= 0:
+                            bar_h2 = int(avail_h * val2 / span) if span else 0
+                            y0b = zero_y - bar_h2; y1b = zero_y
+                            col2 = bar_color
+                        else:
+                            bar_h2 = int(avail_h * abs(val2) / span) if span else 0
+                            y0b = zero_y; y1b = zero_y + bar_h2
+                            col2 = COLORS["red"]
+                        if bar_h2 > 0:
+                            cv2.create_rectangle(x0b, y0b, x1b, y1b, fill=col2, outline="")
+                        # valor acima/abaixo
+                        if val2 != 0:
+                            lbl_v = f"¥{abs(val2)//1000}k" if abs(val2) >= 10000 else f"¥{val2:,}"
+                            anchor_v = "s" if val2 >= 0 else "n"
+                            yv = y0b - 3 if val2 >= 0 else y1b + 3
+                            cv2.create_text(xc2, yv, text=lbl_v,
+                                            font=("Helvetica",6,"bold"),
+                                            fill=col2, anchor=anchor_v)
+                        cv2.create_text(xc2, H2 - PAD_B + 10, text=lbl_m,
+                                        font=("Helvetica",6), fill=COLORS["text_muted"],
+                                        anchor="center")
+                cv2.bind("<Configure>", _draw)
+                cv2.after(60, _draw)
+
+            charts_outer = tk.Frame(self._ra_inner, bg=COLORS["bg_content"])
+            charts_outer.pack(fill="x", pady=(2,8))
+
+            left_card = tk.Frame(charts_outer, bg=COLORS["bg_card"],
+                                 highlightthickness=1, highlightbackground=COLORS["border"])
+            left_card.pack(side="left", fill="both", expand=True, padx=(0,6))
+            tk.Frame(left_card, bg=COLORS["blue"], height=3).pack(fill="x")
+            _make_bar_chart(left_card, "📈  Receita Mensal", COLORS["blue"],  mensal_rec, baseline=False)
+
+            right_card = tk.Frame(charts_outer, bg=COLORS["bg_card"],
+                                  highlightthickness=1, highlightbackground=COLORS["border"])
+            right_card.pack(side="right", fill="both", expand=True, padx=(6,0))
+            tk.Frame(right_card, bg=COLORS["green"], height=3).pack(fill="x")
+            _make_bar_chart(right_card, "💹  Lucro Mensal",   COLORS["green"], mensal_luc, baseline=True)
+
+            # cache para PDF
+            self._ra_data_cache = {
+                "ano": a,
+                "cnt_v": cnt_v, "cnt_os": cnt_os, "cnt_sk": cnt_sk,
+                "receita_v": receita_v_tot, "custo_v_sem": custo_v_sem,
+                "is_v": is_v_tot, "custo_v": custo_v_tot, "lucro_v": lucro_v, "marg_v": marg_v,
+                "receita_os": receita_os_tot, "custo_os_sem": custo_os_sem,
+                "is_os": is_os_tot, "custo_os": custo_os_tot, "lucro_os": lucro_os, "marg_os": marg_os,
+                "receita_sk": receita_sk_tot, "custo_sk_sem": custo_sk_sem,
+                "is_sk": is_sk_tot, "custo_sk": custo_sk_tot, "lucro_sk": lucro_sk, "marg_sk": marg_sk,
+                "total_desp": total_desp_tot, "is_total": is_total,
+                "custo_sem_tot": custo_sem_tot, "receita_tot": receita_tot,
+                "lucro_bruto": lucro_bruto, "lucro_liq": lucro_liq, "marg_geral": marg_geral,
+                "mensal": mensal,
+            }
+
+        def _exportar_pdf():
+            from tkinter import messagebox as _mb, filedialog as _fd
+            import datetime as _dt
+            d = self._ra_data_cache
+            if not d:
+                _refresh()
+                d = self._ra_data_cache
+            try:
+                from reportlab.lib.pagesizes import A4
+                from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
+                                                Spacer, Paragraph, HRFlowable)
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib import colors as rl_colors
+                from reportlab.lib.units import cm
+            except ImportError:
+                _mb.showerror("PDF", "reportlab nao instalado.")
+                return
+            path = _fd.asksaveasfilename(
+                defaultextension=".pdf", filetypes=[("PDF", "*.pdf")],
+                initialfile=f"relatorio_anual_{d.get('ano','')}.pdf",
+                title="Salvar Relatorio Anual")
+            if not path: return
+
+            hoje_str = _dt.date.today().strftime("%d/%m/%Y")
+            RED    = rl_colors.HexColor("#C00000")
+            DARK   = rl_colors.HexColor("#111827")
+            GRAY   = rl_colors.HexColor("#D1D5DB")
+            LGRAY  = rl_colors.HexColor("#F9FAFB")
+            GREEN  = rl_colors.HexColor("#16A34A")
+            ORANGE = rl_colors.HexColor("#EA580C")
+            BLUE   = rl_colors.HexColor("#1D4ED8")
+            GOLD   = rl_colors.HexColor("#B45309")
+            PURPLE = rl_colors.HexColor("#8E44AD")
+            MUTED  = rl_colors.HexColor("#6B7280")
+
+            styles = getSampleStyleSheet()
+            def P(txt, size=8, bold=False, color=DARK, align="LEFT"):
+                return Paragraph(
+                    f"<b>{txt}</b>" if bold else str(txt),
+                    ParagraphStyle("_p", parent=styles["Normal"],
+                                   fontSize=size, textColor=color, leading=size+3,
+                                   alignment={"LEFT":0,"CENTER":1,"RIGHT":2}.get(align,0)))
+
+            doc = SimpleDocTemplate(path, pagesize=A4,
+                                    rightMargin=1.5*cm, leftMargin=1.5*cm,
+                                    topMargin=1.5*cm, bottomMargin=1.5*cm)
+            story = []
+
+            story.append(P("KM CARS - Relatorio Anual", size=16, bold=True, color=RED))
+            story.append(P(f"Ano: {d.get('ano','')}   |   Gerado em: {hoje_str}", size=8, color=MUTED))
+            story.append(Spacer(1, 0.2*cm))
+            story.append(HRFlowable(width="100%", thickness=2, color=RED))
+            story.append(Spacer(1, 0.3*cm))
+
+            def kpi_table(title, title_color, items):
+                story.append(P(title, size=9, bold=True, color=title_color))
+                story.append(Spacer(1, 0.1*cm))
+                lbl_row = [P(lbl, size=7, color=MUTED)          for lbl,val,vc in items]
+                val_row = [P(val, size=9, bold=True, color=vc)  for lbl,val,vc in items]
+                n = len(items)
+                cw = [17.0*cm / n] * n
+                tbl = Table([lbl_row, val_row], colWidths=cw)
+                tbl.setStyle(TableStyle([
+                    ("BACKGROUND",    (0,0), (-1,-1), LGRAY),
+                    ("LINEBELOW",     (0,0), (-1, 0), 0.3, GRAY),
+                    ("TOPPADDING",    (0,0), (-1,-1), 4),
+                    ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+                    ("LEFTPADDING",   (0,0), (-1,-1), 6),
+                    ("RIGHTPADDING",  (0,0), (-1,-1), 6),
+                    ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+                ]))
+                story.append(tbl)
+                story.append(Spacer(1, 0.25*cm))
+
+            kpi_table(f"VENDAS  ({d.get('cnt_v',0)} vendas)", GREEN, [
+                ("Receita",    f"Y {d.get('receita_v',0):,}",      GREEN),
+                ("Custo s/IS", f"Y {d.get('custo_v_sem',0):,}",    ORANGE),
+                ("IS (CNF)",   f"Y {d.get('is_v',0):,}",           PURPLE),
+                ("C. Total",   f"Y {d.get('custo_v',0):,}",        RED),
+                ("Lucro",      f"Y {d.get('lucro_v',0):,}",        GREEN if d.get('lucro_v',0)>=0 else RED),
+                ("Margem",     f"{d.get('marg_v',0):.1f}%",        BLUE),
+            ])
+            kpi_table(f"ORDENS DE SERVICO  ({d.get('cnt_os',0)} OS)", BLUE, [
+                ("Receita",    f"Y {d.get('receita_os',0):,}",     BLUE),
+                ("Custo s/IS", f"Y {d.get('custo_os_sem',0):,}",   ORANGE),
+                ("IS (CNF)",   f"Y {d.get('is_os',0):,}",          PURPLE),
+                ("C. Total",   f"Y {d.get('custo_os',0):,}",       RED),
+                ("Lucro",      f"Y {d.get('lucro_os',0):,}",       GREEN if d.get('lucro_os',0)>=0 else RED),
+                ("Margem",     f"{d.get('marg_os',0):.1f}%",       BLUE),
+            ])
+            kpi_table(f"SHAKEN  ({d.get('cnt_sk',0)} registros)", GOLD, [
+                ("Receita",    f"Y {d.get('receita_sk',0):,}",     GOLD),
+                ("Custo s/IS", f"Y {d.get('custo_sk_sem',0):,}",   ORANGE),
+                ("IS (CNF)",   f"Y {d.get('is_sk',0):,}",          PURPLE),
+                ("C. Total",   f"Y {d.get('custo_sk',0):,}",       RED),
+                ("Lucro",      f"Y {d.get('lucro_sk',0):,}",       GREEN if d.get('lucro_sk',0)>=0 else RED),
+                ("Margem",     f"{d.get('marg_sk',0):.1f}%",       BLUE),
+            ])
+            kpi_table("DESPESAS FIXAS (anual)", RED, [
+                ("Total", f"Y {d.get('total_desp',0):,}", RED),
+            ])
+            story.append(HRFlowable(width="100%", thickness=0.5, color=GRAY))
+            story.append(Spacer(1, 0.1*cm))
+            kpi_table("RESUMO CONSOLIDADO DO ANO", DARK, [
+                ("Receita Total", f"Y {d.get('receita_tot',0):,}",    GREEN),
+                ("Custo s/IS",    f"Y {d.get('custo_sem_tot',0):,}",  ORANGE),
+                ("IS Total",      f"Y {d.get('is_total',0):,}",       PURPLE),
+                ("Lucro Bruto",   f"Y {d.get('lucro_bruto',0):,}",    GREEN if d.get('lucro_bruto',0)>=0 else RED),
+                ("(-) Despesas",  f"Y {d.get('total_desp',0):,}",     RED),
+                ("Lucro Liquido", f"Y {d.get('lucro_liq',0):,}",      GREEN if d.get('lucro_liq',0)>=0 else RED),
+                ("Margem Geral",  f"{d.get('marg_geral',0):.1f}%",    BLUE),
+            ])
+
+            # ── Tabela mensal ────────────────────────────────────────────────
+            story.append(HRFlowable(width="100%", thickness=0.5, color=GRAY))
+            story.append(Spacer(1, 0.2*cm))
+            story.append(P("RECEITA MENSAL", size=9, bold=True, color=BLUE))
+            story.append(Spacer(1, 0.1*cm))
+
+            mensal_hdr = [P(m[0], size=7, bold=True, color=MUTED) for m in d.get("mensal",[])]
+            mensal_val = [P(f"Y {m[1]:,}" if m[1] else "—", size=7,
+                            bold=True, color=GREEN if m[1]>=0 else RED)
+                          for m in d.get("mensal",[])]
+            if mensal_hdr:
+                cw12 = [17.0*cm / 12] * 12
+                m_tbl = Table([mensal_hdr, mensal_val], colWidths=cw12)
+                m_tbl.setStyle(TableStyle([
+                    ("BACKGROUND",    (0,0), (-1,-1), LGRAY),
+                    ("LINEBELOW",     (0,0), (-1, 0), 0.3, GRAY),
+                    ("TOPPADDING",    (0,0), (-1,-1), 4),
+                    ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+                    ("LEFTPADDING",   (0,0), (-1,-1), 4),
+                    ("RIGHTPADDING",  (0,0), (-1,-1), 4),
+                    ("ALIGN",         (0,1), (-1,1), "CENTER"),
+                ]))
+                story.append(m_tbl)
+
+            story.append(Spacer(1, 0.4*cm))
+            story.append(HRFlowable(width="100%", thickness=0.5, color=GRAY))
+            story.append(Spacer(1, 0.1*cm))
+            story.append(P(f"KM Cars - Fujinomiya, Japan  |  Gerado em {hoje_str}",
+                           size=7, color=MUTED, align="CENTER"))
+            doc.build(story)
+            _mb.showinfo("PDF Gerado", f"Relatorio anual salvo:\n{path}")
+            try:
+                import subprocess, sys
+                if sys.platform == "win32":    os.startfile(path)
+                elif sys.platform == "darwin": subprocess.call(["open", path])
+                else:                          subprocess.call(["xdg-open", path])
+            except Exception: pass
+
+        _refresh()
+
     def _build_dash_dossie_cliente(self, parent):
         self._dc_cliente_id   = None
         self._dc_search_var   = tk.StringVar(value="")
@@ -9885,9 +11764,14 @@ class KMCars(tk.Tk):
         left.pack(side="left", fill="y", padx=(0,12))
         left.pack_propagate(False)
         tk.Frame(left, bg=COLORS["blue"], height=4).pack(fill="x")
-        tk.Label(left, text="◈  Buscar Cliente",
+        _dc_hdr = tk.Frame(left, bg=COLORS["bg_card"])
+        _dc_hdr.pack(fill="x", padx=14, pady=(12,4))
+        tk.Label(_dc_hdr, text="◈  Buscar Cliente",
                  font=("Helvetica",10,"bold"),
-                 bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(anchor="w",padx=14,pady=(12,4))
+                 bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(_dc_hdr, text="↺ Atualizar", font=("Helvetica", 7),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=6, pady=2, command=self._dc_buscar).pack(side="right")
 
         tk.Label(left, text="ID ou Nome:", font=("Helvetica",8,"bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_secondary"]).pack(anchor="w",padx=14)
@@ -10035,6 +11919,7 @@ class KMCars(tk.Tk):
         section("▸ Dados Pessoais", COLORS["blue"])
         row2("Nome",     cli.get("nome"))
         row2("Telefone", cli.get("telefone"))
+        row2("Cidade",   cli.get("cidade") or "—")
 
         # ── Resumo financeiro ─────────────────────────────────────────────────
         section("▸ Resumo Financeiro", COLORS["green"])
@@ -10338,6 +12223,7 @@ class KMCars(tk.Tk):
         dados_p = [
             ["Nome",     cli.get("nome") or "—"],
             ["Telefone", cli.get("telefone") or "—"],
+            ["Cidade",   cli.get("cidade") or "—"],
         ]
         t = Table([[body(f"<b>{k}</b>"), body(v)] for k,v in dados_p],
                   colWidths=[4*cm, 12*cm])
@@ -10480,9 +12366,14 @@ class KMCars(tk.Tk):
         left.pack(side="left", fill="y", padx=(0,12))
         left.pack_propagate(False)
         tk.Frame(left, bg=COLORS["orange"], height=4).pack(fill="x")
-        tk.Label(left, text="▦  Buscar Veículo",
+        _dcar_hdr = tk.Frame(left, bg=COLORS["bg_card"])
+        _dcar_hdr.pack(fill="x", padx=14, pady=(12,4))
+        tk.Label(_dcar_hdr, text="▦  Buscar Veículo",
                  font=("Helvetica",10,"bold"),
-                 bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(anchor="w",padx=14,pady=(12,4))
+                 bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(_dcar_hdr, text="↺ Atualizar", font=("Helvetica", 7),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=6, pady=2, command=self._dcar_buscar).pack(side="right")
 
         tk.Label(left, text="Nome / Placa / Chassi / ID:", font=("Helvetica",8,"bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_secondary"]).pack(anchor="w",padx=14)
@@ -11146,7 +13037,7 @@ class KMCars(tk.Tk):
         tk.Label(hdr, text="◎  Previsão de Recebimento",
                  font=("Helvetica",13,"bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
-        tk.Button(hdr, text="↺  Atualizar", font=("Helvetica",8),
+        tk.Button(hdr, text="↺ Atualizar", font=("Helvetica",8),
                   bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
                   command=lambda: self._refresh_previsao(body_frame, kpi_frame),
                   ).pack(side="right", ipady=3, padx=(0,4))
@@ -11488,7 +13379,7 @@ class KMCars(tk.Tk):
         tk.Label(hdr, text="◎  Dívidas dos Clientes",
                  font=("Helvetica",13,"bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
-        tk.Button(hdr, text="↺  Atualizar", font=("Helvetica",8),
+        tk.Button(hdr, text="↺ Atualizar", font=("Helvetica",8),
                   bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
                   command=lambda: self._refresh_dividas(body_div, kpi_div)
                   ).pack(side="right", ipady=3, padx=(0,4))
@@ -11730,6 +13621,866 @@ class KMCars(tk.Tk):
         except Exception:
             pass
         msgbox.showinfo("PDF Gerado", f"Salvo em:\n{path}")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # MÓDULO: CONFIGURAÇÕES
+    # ══════════════════════════════════════════════════════════════════════════
+    def _build_configuracoes_subs(self, parent):
+        self.sub_pages["Configurações"] = {}
+        for sub, fn in [
+            ("Geral",          self._build_config_geral),
+            ("Interface",      self._build_config_interface),
+            ("IS",  self._build_config_is),
+            ("Banco de Dados", self._build_config_banco),
+        ]:
+            frame = tk.Frame(parent, bg=COLORS["bg_content"])
+            self.sub_pages["Configurações"][sub] = frame
+            fn(frame)
+        list(self.sub_pages["Configurações"].values())[0].place(
+            in_=parent, x=0, y=0, relwidth=1, relheight=1)
+
+    def _config_header(self, parent, titulo, subtitulo, icon="⚙"):
+        root = tk.Frame(parent, bg=COLORS["bg_content"])
+        root.pack(fill="both", expand=True, padx=24, pady=20)
+        hdr = tk.Frame(root, bg=COLORS["bg_content"])
+        hdr.pack(fill="x", pady=(0, 20))
+        tk.Label(hdr, text=f"{icon}  {titulo}", font=("Helvetica", 14, "bold"),
+                 bg=COLORS["bg_content"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Label(hdr, text=subtitulo, font=("Helvetica", 9),
+                 bg=COLORS["bg_content"], fg=COLORS["text_muted"]).pack(side="left", padx=12)
+        return root
+
+    def _config_card(self, parent, titulo, cor=None):
+        cor = cor or COLORS["accent"]
+        card = tk.Frame(parent, bg=COLORS["bg_card"],
+                        highlightthickness=1, highlightbackground=COLORS["border"])
+        card.pack(fill="x", pady=(0, 14))
+        tk.Frame(card, bg=cor, height=3).pack(fill="x")
+        if titulo:
+            tk.Label(card, text=titulo, font=("Helvetica", 10, "bold"),
+                     bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(
+                         anchor="w", padx=16, pady=(12, 4))
+            tk.Frame(card, bg=COLORS["border"], height=1).pack(fill="x", padx=16, pady=(0, 10))
+        return card
+
+    def _build_config_geral(self, parent):
+        root = self._config_header(parent, "Configurações Gerais",
+                                   "Nome da empresa, versão e preferências gerais", "⚙")
+        card = self._config_card(root, "Informações da Empresa")
+        cfg = self._cfg_load()
+
+        def row(card, label, var, width=30):
+            f = tk.Frame(card, bg=COLORS["bg_card"])
+            f.pack(fill="x", padx=16, pady=(0, 10))
+            tk.Label(f, text=label, font=("Helvetica", 8, "bold"), width=18, anchor="w",
+                     bg=COLORS["bg_card"], fg=COLORS["text_secondary"]).pack(side="left")
+            e = tk.Entry(f, textvariable=var, font=("Helvetica", 9),
+                         bg=COLORS["bg_main"], fg=COLORS["text_primary"],
+                         insertbackground=COLORS["text_primary"],
+                         relief="flat", highlightthickness=1,
+                         highlightbackground=COLORS["border"], width=width)
+            e.pack(side="left", ipady=5)
+            return e
+
+        self._cfg_empresa    = tk.StringVar(value=cfg.get("empresa", "KM Cars"))
+        self._cfg_cidade_emp = tk.StringVar(value=cfg.get("cidade_emp", "Fujinomiya · Japan"))
+        self._cfg_versao     = tk.StringVar(value=cfg.get("versao", "1.0.0"))
+        row(card, "Nome da Empresa",   self._cfg_empresa)
+        row(card, "Cidade / País",     self._cfg_cidade_emp)
+        row(card, "Versão do Sistema", self._cfg_versao, width=10)
+
+        card2 = self._config_card(root, "Backup Automático", COLORS["green"])
+        self._cfg_backup_auto = tk.BooleanVar(value=cfg.get("backup_auto", True))
+        self._cfg_backup_dias = tk.IntVar(value=cfg.get("backup_dias", 7))
+        f2 = tk.Frame(card2, bg=COLORS["bg_card"])
+        f2.pack(fill="x", padx=16, pady=(0, 10))
+        tk.Label(f2, text="Backup automático ativo", font=("Helvetica", 9),
+                 bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Checkbutton(f2, variable=self._cfg_backup_auto,
+                       bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+                       activebackground=COLORS["bg_card"],
+                       selectcolor=COLORS["bg_main"]).pack(side="left", padx=8)
+        f3 = tk.Frame(card2, bg=COLORS["bg_card"])
+        f3.pack(fill="x", padx=16, pady=(0, 10))
+        tk.Label(f3, text="Frequência (dias)", font=("Helvetica", 8, "bold"), width=18, anchor="w",
+                 bg=COLORS["bg_card"], fg=COLORS["text_secondary"]).pack(side="left")
+        tk.Spinbox(f3, from_=1, to=30, textvariable=self._cfg_backup_dias,
+                   width=5, font=("Helvetica", 9),
+                   bg=COLORS["bg_main"], fg=COLORS["text_primary"]).pack(side="left", ipady=4)
+
+        btn_f = tk.Frame(root, bg=COLORS["bg_content"])
+        btn_f.pack(fill="x")
+        self._cfg_geral_status = tk.Label(btn_f, text="", font=("Helvetica", 8),
+                                           bg=COLORS["bg_content"], fg=COLORS["green"])
+        self._cfg_geral_status.pack(side="left", padx=(0, 12))
+        def _salvar_geral():
+            c = self._cfg_load()
+            c.update({"empresa": self._cfg_empresa.get().strip(),
+                       "cidade_emp": self._cfg_cidade_emp.get().strip(),
+                       "versao": self._cfg_versao.get().strip(),
+                       "backup_auto": self._cfg_backup_auto.get(),
+                       "backup_dias": self._cfg_backup_dias.get()})
+            self._cfg_save(c)
+            self._cfg_geral_status.configure(text="✔ Salvo!")
+            self.after(2000, lambda: self._cfg_geral_status.configure(text=""))
+        tk.Button(btn_f, text="  Salvar Configurações  ", font=("Helvetica", 9, "bold"),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  command=_salvar_geral).pack(side="right", ipady=6, ipadx=4)
+
+    def _build_config_interface(self, parent):
+        cfg = self._cfg_load()
+        self._cfg_escala = tk.DoubleVar(value=cfg.get("escala", 1.0))
+        self._cfg_janela = tk.StringVar(value=cfg.get("janela", "maximized"))
+        self._cfg_fonte  = tk.IntVar(value=cfg.get("fonte_base", 9))
+
+        # ── Container externo (não scrola) ────────────────────────────────────
+        outer = tk.Frame(parent, bg=COLORS["bg_content"])
+        outer.pack(fill="both", expand=True, padx=24, pady=(16, 0))
+
+        # ── Cabeçalho fixo ────────────────────────────────────────────────────
+        hdr = tk.Frame(outer, bg=COLORS["bg_content"])
+        hdr.pack(fill="x", pady=(0, 6))
+        tk.Label(hdr, text="🖥  Interface & Resolução", font=("Helvetica", 13, "bold"),
+                 bg=COLORS["bg_content"], fg=COLORS["text_primary"]).pack(side="left")
+
+        # ── Botão Salvar FIXO no topo (sempre visível) ────────────────────────
+        self._cfg_ui_status = tk.Label(hdr, text="", font=("Helvetica", 8),
+                                        bg=COLORS["bg_content"], fg=COLORS["green"])
+        self._cfg_ui_status.pack(side="right", padx=(0, 10))
+
+        def _salvar_ui():
+            try:
+                escala = float(self._cfg_escala.get())
+                escala = max(0.7, min(1.5, escala))
+                self._cfg_escala.set(round(escala, 2))
+            except Exception:
+                escala = 1.0
+            c = self._cfg_load()
+            c.update({"escala": escala, "janela": self._cfg_janela.get(),
+                       "fonte_base": self._cfg_fonte.get()})
+            self._cfg_save(c)
+            j = self._cfg_janela.get()
+            if j == "maximized":
+                self.state("zoomed")
+            elif "x" in j:
+                w2, h2 = j.split("x")
+                self.geometry(f"{w2}x{h2}")
+                self.state("normal")
+            self._cfg_ui_status.configure(text="✔ Salvo! Reinicie para aplicar escala.")
+            self.after(4000, lambda: self._cfg_ui_status.configure(text=""))
+
+        tk.Button(hdr, text="  💾 Salvar & Aplicar  ", font=("Helvetica", 9, "bold"),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  command=_salvar_ui).pack(side="right", ipady=5, ipadx=4)
+
+        tk.Label(outer,
+                 text="⚠  Salve e REINICIE para aplicar escala. Janela é aplicada imediatamente.",
+                 font=("Helvetica", 8), bg=COLORS["bg_content"],
+                 fg=COLORS["orange"]).pack(anchor="w", pady=(0, 8))
+
+        tk.Frame(outer, bg=COLORS["border"], height=1).pack(fill="x", pady=(0, 10))
+
+        # ── Área scrollável ───────────────────────────────────────────────────
+        scroll_outer = tk.Frame(outer, bg=COLORS["bg_content"])
+        scroll_outer.pack(fill="both", expand=True)
+
+        vsb = tk.Scrollbar(scroll_outer, orient="vertical")
+        vsb.pack(side="right", fill="y")
+        canvas = tk.Canvas(scroll_outer, bg=COLORS["bg_content"],
+                           highlightthickness=0, yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vsb.configure(command=canvas.yview)
+
+        inner = tk.Frame(canvas, bg=COLORS["bg_content"])
+        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_cfg(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        def _on_resize(e):
+            canvas.itemconfig(cw, width=e.width)
+        inner.bind("<Configure>", _on_cfg)
+        canvas.bind("<Configure>", _on_resize)
+        canvas.bind("<Enter>",
+            lambda e: canvas.bind_all("<MouseWheel>",
+                lambda ev: canvas.yview_scroll(int(-1*(ev.delta/120)), "units")))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        # helper para cards dentro do inner scrollável
+        def cfg_card(titulo, cor):
+            card = tk.Frame(inner, bg=COLORS["bg_card"],
+                            highlightthickness=1, highlightbackground=COLORS["border"])
+            card.pack(fill="x", pady=(0, 12), padx=2)
+            tk.Frame(card, bg=cor, height=3).pack(fill="x")
+            tk.Label(card, text=titulo, font=("Helvetica", 10, "bold"),
+                     bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(
+                         anchor="w", padx=16, pady=(10, 4))
+            tk.Frame(card, bg=COLORS["border"], height=1).pack(fill="x", padx=16, pady=(0, 8))
+            return card
+
+        # ── Card 1: Escala ────────────────────────────────────────────────────
+        card = cfg_card("Escala & Zoom", COLORS["blue"])
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        tk.Label(card, text=f"Resolução detectada: {sw} × {sh} px",
+                 font=("Helvetica", 9, "bold"), bg=COLORS["bg_card"],
+                 fg=COLORS["text_secondary"]).pack(anchor="w", padx=16, pady=(0, 8))
+
+        presets = [
+            ("Muito pequeno  — 1366×768 / Windows 100%",     0.75),
+            ("Pequeno        — 1536×864 / Windows 125%",     0.85),
+            ("Médio          — 1920×1080 notebook Win 125%", 0.92),
+            ("Padrão         — 1920×1080 desktop 24\"",       1.00),
+            ("Grande         — monitor 27\"+ / 2K",           1.10),
+            ("Extra grande   — 4K / TV",                      1.20),
+        ]
+        tk.Label(card, text="Selecione o preset:",
+                 font=("Helvetica", 8, "bold"),
+                 bg=COLORS["bg_card"], fg=COLORS["text_secondary"]).pack(
+                     anchor="w", padx=16, pady=(0, 4))
+        for label, val in presets:
+            fb = tk.Frame(card, bg=COLORS["bg_card"])
+            fb.pack(fill="x", padx=16, pady=1)
+            tk.Radiobutton(fb, text=label, variable=self._cfg_escala, value=val,
+                           font=("Helvetica", 9),
+                           bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+                           activebackground=COLORS["bg_card"],
+                           selectcolor=COLORS["bg_main"]).pack(side="left")
+            if val == 0.85:
+                tk.Label(fb, text="← recomendado para 1536×864",
+                         font=("Helvetica", 8), bg=COLORS["bg_card"],
+                         fg=COLORS["orange"]).pack(side="left", padx=6)
+            elif val == 1.0:
+                tk.Label(fb, text="← padrão desktop 24\"",
+                         font=("Helvetica", 8), bg=COLORS["bg_card"],
+                         fg=COLORS["text_muted"]).pack(side="left", padx=6)
+
+        fc = tk.Frame(card, bg=COLORS["bg_card"])
+        fc.pack(fill="x", padx=16, pady=(6, 10))
+        tk.Label(fc, text="Valor personalizado (0.7–1.5):",
+                 font=("Helvetica", 8), bg=COLORS["bg_card"],
+                 fg=COLORS["text_secondary"]).pack(side="left")
+        tk.Entry(fc, textvariable=self._cfg_escala, width=6,
+                 font=("Helvetica", 9), bg=COLORS["bg_main"],
+                 fg=COLORS["text_primary"], relief="flat",
+                 highlightthickness=1, highlightbackground=COLORS["border"]
+                 ).pack(side="left", padx=8, ipady=4)
+
+        # ── Card 2: Janela ────────────────────────────────────────────────────
+        card2 = cfg_card("Tamanho da Janela ao Iniciar", COLORS["orange"])
+        for label, val in [
+            ("Maximizado (recomendado)", "maximized"),
+            ("1280 × 800",               "1280x800"),
+            ("1440 × 900",               "1440x900"),
+            ("1600 × 900",               "1600x900"),
+            ("1920 × 1080",              "1920x1080"),
+        ]:
+            tk.Radiobutton(card2, text=label, variable=self._cfg_janela, value=val,
+                           font=("Helvetica", 9),
+                           bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+                           activebackground=COLORS["bg_card"],
+                           selectcolor=COLORS["bg_main"]).pack(anchor="w", padx=16, pady=2)
+        tk.Frame(card2, bg=COLORS["bg_card"], height=6).pack()
+
+        # ── Card 3: Fonte ─────────────────────────────────────────────────────
+        card3 = cfg_card("Tamanho de Fonte Base", COLORS["green"])
+        ff3 = tk.Frame(card3, bg=COLORS["bg_card"])
+        ff3.pack(fill="x", padx=16, pady=(0, 10))
+        tk.Label(ff3, text="Tamanho base (px):", font=("Helvetica", 8, "bold"),
+                 bg=COLORS["bg_card"], fg=COLORS["text_secondary"]).pack(side="left")
+        tk.Spinbox(ff3, from_=7, to=14, textvariable=self._cfg_fonte,
+                   width=4, font=("Helvetica", 9),
+                   bg=COLORS["bg_main"], fg=COLORS["text_primary"]).pack(
+                       side="left", padx=8, ipady=4)
+        tk.Label(ff3, text="(reinicie para aplicar)", font=("Helvetica", 8),
+                 bg=COLORS["bg_card"], fg=COLORS["text_muted"]).pack(side="left")
+
+    def _build_config_is(self, parent):
+        """Sub-tela para configurar percentual IS."""
+        outer = tk.Frame(parent, bg=COLORS["bg_content"])
+        outer.pack(fill="both", expand=True, padx=24, pady=(16, 0))
+        hdr = tk.Frame(outer, bg=COLORS["bg_content"])
+        hdr.pack(fill="x", pady=(0, 8))
+        tk.Label(hdr, text="💴  IS — Imposto (CNF)",
+                 font=("Helvetica", 13, "bold"),
+                 bg=COLORS["bg_content"], fg=COLORS["text_primary"]).pack(side="left")
+
+        card = tk.Frame(outer, bg=COLORS["bg_card"],
+                        highlightthickness=1, highlightbackground=COLORS["border"])
+        card.pack(fill="x", pady=(0, 14))
+        tk.Frame(card, bg=COLORS["blue"], height=3).pack(fill="x")
+        tk.Label(card, text="Percentual IS",
+                 font=("Helvetica", 10, "bold"),
+                 bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(
+                     anchor="w", padx=16, pady=(10, 2))
+        tk.Frame(card, bg=COLORS["border"], height=1).pack(fill="x", padx=16, pady=(0, 10))
+
+        desc = tk.Label(card,
+            text="Aplicado automaticamente como custo 'IS' ao registrar Vendas, OS e Shaken com NFI = CNF.",
+            font=("Helvetica", 8), bg=COLORS["bg_card"], fg=COLORS["text_secondary"],
+            wraplength=500, justify="left")
+        desc.pack(anchor="w", padx=16, pady=(0, 10))
+
+        try:
+            cur_perc = float(self.conn.execute(
+                "SELECT valor FROM configuracoes WHERE chave='is_percentual'"
+                ).fetchone()[0] or 10)
+        except Exception:
+            cur_perc = 10.0
+
+        ff = tk.Frame(card, bg=COLORS["bg_card"])
+        ff.pack(fill="x", padx=16, pady=(0, 14))
+        tk.Label(ff, text="Percentual atual (%):",
+                 font=("Helvetica", 9, "bold"),
+                 bg=COLORS["bg_card"], fg=COLORS["text_secondary"]).pack(side="left")
+        self._is_perc_var = tk.DoubleVar(value=cur_perc)
+        sp = tk.Spinbox(ff, from_=0.0, to=99.9, increment=0.5,
+                        textvariable=self._is_perc_var,
+                        width=7, font=("Helvetica", 10),
+                        bg=COLORS["bg_main"], fg=COLORS["text_primary"])
+        sp.pack(side="left", padx=(8, 10), ipady=4)
+        tk.Label(ff, text=f"(padrão: 10%)",
+                 font=("Helvetica", 8), bg=COLORS["bg_card"],
+                 fg=COLORS["text_muted"]).pack(side="left")
+
+        st_lbl = tk.Label(outer, text="", font=("Helvetica", 9),
+                          bg=COLORS["bg_content"], fg=COLORS["green"])
+        st_lbl.pack(anchor="w", pady=(0, 8))
+
+        def _salvar_is():
+            try:
+                p = float(self._is_perc_var.get())
+                p = max(0.0, min(99.9, round(p, 1)))
+                self._is_perc_var.set(p)
+            except Exception:
+                p = 10.0
+            self.conn.execute(
+                "INSERT OR REPLACE INTO configuracoes (chave,valor) VALUES ('is_percentual',?)",
+                (str(p),))
+            self.conn.commit()
+            st_lbl.configure(text=f"✔ IS salvo: {p}%")
+            outer.after(3000, lambda: st_lbl.configure(text=""))
+
+        tk.Button(outer, text="  💾 Salvar Percentual IS  ",
+                  font=("Helvetica", 10, "bold"),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  command=_salvar_is).pack(anchor="w", ipady=6, ipadx=6)
+
+    def _build_config_banco(self, parent):
+        import os, datetime
+        root = self._config_header(parent, "Banco de Dados",
+                                   "Backup manual, localizacao e manutencao", "🗄")
+        card = self._config_card(root, "Localizacao do Banco", COLORS["blue"])
+        db_path = getattr(self, "_db_path", "—")
+        try:
+            db_size_str = f"{os.path.getsize(db_path) / 1024:.1f} KB"
+        except Exception:
+            db_size_str = "—"
+        for label, val in [("Arquivo:", db_path), ("Tamanho:", db_size_str)]:
+            fr = tk.Frame(card, bg=COLORS["bg_card"])
+            fr.pack(fill="x", padx=16, pady=(0, 6))
+            tk.Label(fr, text=label, font=("Helvetica", 8, "bold"), width=10, anchor="w",
+                     bg=COLORS["bg_card"], fg=COLORS["text_secondary"]).pack(side="left")
+            tk.Label(fr, text=val, font=("Helvetica", 8),
+                     bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+                     wraplength=450, justify="left").pack(side="left")
+        tk.Frame(card, bg=COLORS["bg_card"], height=6).pack()
+
+        card2 = self._config_card(root, "Backup Manual", COLORS["green"])
+        self._cfg_bk_status = tk.Label(card2, text="", font=("Helvetica", 8),
+                                        bg=COLORS["bg_card"], fg=COLORS["green"])
+        self._cfg_bk_status.pack(anchor="w", padx=16, pady=(0, 6))
+        def _fazer_backup():
+            try:
+                import shutil
+                db = getattr(self, "_db_path", None)
+                if not db or not os.path.exists(db):
+                    self._cfg_bk_status.configure(
+                        text="Banco nao encontrado.", fg=COLORS["red"]); return
+                bk_dir = os.path.join(os.path.dirname(db), "backups")
+                os.makedirs(bk_dir, exist_ok=True)
+                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                dest = os.path.join(bk_dir, f"kmcars_backup_{ts}.db")
+                shutil.copy2(db, dest)
+                self._cfg_bk_status.configure(
+                    text=f"Backup salvo: {dest}", fg=COLORS["green"])
+            except Exception as e:
+                self._cfg_bk_status.configure(text=f"Erro: {e}", fg=COLORS["red"])
+        tk.Button(card2, text="  Fazer Backup Agora  ", font=("Helvetica", 9, "bold"),
+                  bg=COLORS["green"], fg="white", relief="flat", cursor="hand2",
+                  command=_fazer_backup).pack(anchor="w", padx=16, pady=(0, 10),
+                                             ipadx=4, ipady=6)
+
+        card3 = self._config_card(root, "Manutencao do Banco", COLORS["orange"])
+        tk.Label(card3,
+                 text="VACUUM compacta o banco removendo espaco nao utilizado. Recomendado mensalmente.",
+                 font=("Helvetica", 8), bg=COLORS["bg_card"],
+                 fg=COLORS["text_muted"]).pack(anchor="w", padx=16, pady=(0, 8))
+        self._cfg_vac_status = tk.Label(card3, text="", font=("Helvetica", 8),
+                                         bg=COLORS["bg_card"], fg=COLORS["green"])
+        self._cfg_vac_status.pack(anchor="w", padx=16)
+        def _vacuum():
+            try:
+                self.conn.execute("VACUUM"); self.conn.commit()
+                try:
+                    sz = os.path.getsize(getattr(self, "_db_path", ""))
+                    self._cfg_vac_status.configure(
+                        text=f"VACUUM concluido. Tamanho: {sz/1024:.1f} KB", fg=COLORS["green"])
+                except Exception:
+                    self._cfg_vac_status.configure(text="VACUUM concluido.", fg=COLORS["green"])
+            except Exception as e:
+                self._cfg_vac_status.configure(text=f"Erro: {e}", fg=COLORS["red"])
+        tk.Button(card3, text="  Executar VACUUM  ", font=("Helvetica", 9),
+                  bg=COLORS["orange"], fg="white", relief="flat", cursor="hand2",
+                  command=_vacuum).pack(anchor="w", padx=16, pady=(4, 10), ipadx=4, ipady=5)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  EXPORTAR PDF / EXCEL — Vendas, OS, Shaken
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _get_is_perc(self):
+        """Retorna percentual IS configurado (padrão 10)."""
+        try:
+            return float(self.conn.execute(
+                "SELECT valor FROM configuracoes WHERE chave='is_percentual'"
+            ).fetchone()[0])
+        except Exception:
+            return 10.0
+
+    # ── helpers comuns ────────────────────────────────────────────────────────
+    def _rl_header(self, story, titulo, filtros_txt, styles, rl_colors, Paragraph, Spacer, HRFlowable):
+        """Gera cabeçalho padrão para PDFs de relatório."""
+        from reportlab.lib.enums import TA_CENTER
+        from reportlab.lib.styles import ParagraphStyle
+        h1 = ParagraphStyle("h1", parent=styles["Normal"], fontSize=14, fontName="Helvetica-Bold",
+                             alignment=TA_CENTER, textColor=rl_colors.HexColor("#1a1a2e"), spaceAfter=4)
+        h2 = ParagraphStyle("h2", parent=styles["Normal"], fontSize=8,
+                             alignment=TA_CENTER, textColor=rl_colors.grey, spaceAfter=8)
+        story.append(Paragraph("KM Cars", h1))
+        story.append(Paragraph(titulo, h2))
+        if filtros_txt:
+            story.append(Paragraph(filtros_txt, h2))
+        story.append(HRFlowable(width="100%", thickness=1, color=rl_colors.HexColor("#4361ee")))
+        story.append(Spacer(1, 10))
+
+    def _rl_table(self, data, col_widths, rl_colors, Table, TableStyle):
+        """Monta Table estilizada com cabeçalho colorido."""
+        t = Table(data, colWidths=col_widths, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND",  (0,0), (-1,0), rl_colors.HexColor("#4361ee")),
+            ("TEXTCOLOR",   (0,0), (-1,0), rl_colors.white),
+            ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",    (0,0), (-1,0), 8),
+            ("FONTSIZE",    (0,1), (-1,-1), 7),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1),
+             [rl_colors.HexColor("#f8f9ff"), rl_colors.white]),
+            ("GRID",        (0,0), (-1,-1), 0.3, rl_colors.HexColor("#cccccc")),
+            ("ALIGN",       (0,0), (-1,-1), "CENTER"),
+            ("ALIGN",       (0,1), (1,-1), "LEFT"),
+            ("VALIGN",      (0,0), (-1,-1), "MIDDLE"),
+            ("TOPPADDING",  (0,0), (-1,-1), 3),
+            ("BOTTOMPADDING",(0,0),(-1,-1), 3),
+        ]))
+        return t
+
+    def _save_pdf_dialog(self, nome_base):
+        from tkinter import filedialog
+        import datetime
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+        path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")],
+            initialfile=f"{nome_base}_{ts}.pdf",
+            title="Salvar PDF")
+        return path or None
+
+    def _save_excel_dialog(self, nome_base):
+        from tkinter import filedialog
+        import datetime
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            initialfile=f"{nome_base}_{ts}.xlsx",
+            title="Salvar Excel")
+        return path or None
+
+    def _open_file(self, path):
+        import subprocess, sys as _sys, os
+        try:
+            if _sys.platform.startswith("win"):
+                os.startfile(path)
+            elif _sys.platform == "darwin":
+                subprocess.call(["open", path])
+            else:
+                subprocess.call(["xdg-open", path])
+        except Exception:
+            pass
+
+    # ── VENDAS ────────────────────────────────────────────────────────────────
+    def _exportar_vendas_pdf(self):
+        from tkinter import messagebox as _mb
+        lista = getattr(self, "_vendas_lista_filtrada", None)
+        if not lista:
+            _mb.showwarning("PDF", "Nenhuma venda para exportar (aplique os filtros primeiro).")
+            return
+        path = self._save_pdf_dialog("historico_vendas")
+        if not path: return
+        try:
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
+                                             Spacer, HRFlowable, Paragraph)
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib import colors as rl_colors
+            from reportlab.lib.units import cm
+        except ImportError:
+            _mb.showerror("PDF", "Instale reportlab: pip install reportlab"); return
+        styles = getSampleStyleSheet()
+        doc = SimpleDocTemplate(path, pagesize=landscape(A4),
+                                leftMargin=1.5*cm, rightMargin=1.5*cm,
+                                topMargin=1.5*cm, bottomMargin=1.5*cm)
+        story = []
+        # filtros usados
+        nfi_f  = getattr(self, "_venda_filtro_nfi",  None)
+        mes_f  = getattr(self, "_venda_filtro_mes",  None)
+        ano_f  = getattr(self, "_venda_filtro_ano",  None)
+        tipo_f = getattr(self, "_venda_filtro_tipo", None)
+        filtros_txt = f"NFI: {nfi_f.get() if nfi_f else 'Todos'} | " \
+                      f"Mês: {mes_f.get() if mes_f else 'Todos'} | " \
+                      f"Ano: {ano_f.get() if ano_f else 'Todos'} | " \
+                      f"Tipo: {tipo_f.get() if tipo_f else 'Todos'} | " \
+                      f"{len(lista)} registro(s)"
+        self._rl_header(story, "Histórico de Vendas", filtros_txt, styles, rl_colors,
+                        Paragraph, Spacer, HRFlowable)
+        is_perc = self._get_is_perc()
+        headers = ["ID","Data","Carro","Cliente","Tipo","V.Venda","V.Custo","V.Troca","IS","Lucro","NFI"]
+        cw = [1.0*cm,2.0*cm,4.5*cm,3.5*cm,2.2*cm,2.2*cm,2.2*cm,2.2*cm,1.8*cm,2.2*cm,1.5*cm]
+        rows = [headers]
+        for v in lista:
+            nfi  = v.get("nfi") or "SNF"
+            vv   = v.get("valor_venda") or 0
+            vc   = v.get("valor_custo") or v.get("custo_total") or 0
+            vt   = v.get("valor_troca") or 0
+            is_v = int(vv * is_perc/100) if nfi == "CNF" else 0
+            lucro= int(vv) - int(vc) - int(vt) - is_v
+            rows.append([
+                str(v.get("id","")),
+                v.get("data_venda") or "",
+                (v.get("carro") or "")[:30],
+                (v.get("cliente_nome") or "")[:22],
+                v.get("tipo_venda") or "",
+                f"¥{int(vv):,}",
+                f"¥{int(vc):,}",
+                f"¥{int(vt):,}",
+                f"¥{is_v:,}" if is_v else "—",
+                f"¥{lucro:,}",
+                nfi,
+            ])
+        story.append(self._rl_table(rows, cw, rl_colors, Table, TableStyle))
+        doc.build(story)
+        _mb.showinfo("PDF", f"PDF gerado com sucesso!"); self._open_file(path)
+
+    def _exportar_vendas_excel(self):
+        from tkinter import messagebox as _mb
+        lista = getattr(self, "_vendas_lista_filtrada", None)
+        if not lista:
+            _mb.showwarning("Excel", "Nenhuma venda para exportar."); return
+        path = self._save_excel_dialog("historico_vendas")
+        if not path: return
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        except ImportError:
+            _mb.showerror("Excel", "Instale openpyxl: pip install openpyxl"); return
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Vendas"
+        is_perc = self._get_is_perc()
+        hdr_fill  = PatternFill("solid", fgColor="4361EE")
+        hdr_font  = Font(bold=True, color="FFFFFF", size=9)
+        bd        = Border(left=Side(style="thin"), right=Side(style="thin"),
+                           top=Side(style="thin"), bottom=Side(style="thin"))
+        headers = ["ID","Data","Carro","Cliente","Tipo","V.Venda","V.Custo",
+                   "V.Troca","IS (10%)","Lucro","NFI"]
+        for ci, h in enumerate(headers, 1):
+            c = ws.cell(row=1, column=ci, value=h)
+            c.fill = hdr_fill; c.font = hdr_font
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = bd
+        col_widths = [6,12,30,22,14,14,14,14,14,14,7]
+        for ci, w in enumerate(col_widths, 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(ci)].width = w
+        alt_fill = PatternFill("solid", fgColor="F0F4FF")
+        for ri, v in enumerate(lista, 2):
+            nfi  = v.get("nfi") or "SNF"
+            vv   = v.get("valor_venda") or 0
+            vc   = v.get("valor_custo") or v.get("custo_total") or 0
+            vt   = v.get("valor_troca") or 0
+            is_v = int(vv * is_perc/100) if nfi == "CNF" else 0
+            lucro= int(vv) - int(vc) - int(vt) - is_v
+            row_data = [v.get("id"), v.get("data_venda",""), v.get("carro",""),
+                        v.get("cliente_nome",""), v.get("tipo_venda",""),
+                        int(vv), int(vc), int(vt),
+                        is_v, lucro, nfi]
+            fill = alt_fill if ri % 2 == 0 else None
+            for ci, val in enumerate(row_data, 1):
+                c = ws.cell(row=ri, column=ci, value=val)
+                c.border = bd
+                c.alignment = Alignment(horizontal="center" if ci not in (3,4) else "left",
+                                        vertical="center")
+                if fill: c.fill = fill
+                if ci == 11 and nfi == "CNF":
+                    c.fill = PatternFill("solid", fgColor="FFE5B4")
+        ws.freeze_panes = "A2"
+        wb.save(path)
+        _mb.showinfo("Excel", "Excel gerado com sucesso!"); self._open_file(path)
+
+    # ── SHAKEN ────────────────────────────────────────────────────────────────
+    def _exportar_shaken_pdf(self):
+        from tkinter import messagebox as _mb
+        lista = getattr(self, "_shaken_lista_filtrada", None)
+        if not lista:
+            _mb.showwarning("PDF", "Nenhum shaken para exportar."); return
+        path = self._save_pdf_dialog("historico_shaken")
+        if not path: return
+        try:
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
+                                             Spacer, HRFlowable, Paragraph)
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib import colors as rl_colors
+            from reportlab.lib.units import cm
+        except ImportError:
+            _mb.showerror("PDF", "Instale reportlab: pip install reportlab"); return
+        styles = getSampleStyleSheet()
+        doc = SimpleDocTemplate(path, pagesize=landscape(A4),
+                                leftMargin=1.5*cm, rightMargin=1.5*cm,
+                                topMargin=1.5*cm, bottomMargin=1.5*cm)
+        story = []
+        nfi_f  = getattr(self, "_sk_filtro_nfi",   None)
+        tipo_f = getattr(self, "_sk_filtro_tipo",   None)
+        filtros_txt = f"NFI: {nfi_f.get() if nfi_f else 'Todos'} | " \
+                      f"Tipo: {tipo_f.get() if tipo_f else 'Todos'} | " \
+                      f"{len(lista)} registro(s)"
+        self._rl_header(story, "Histórico Shaken", filtros_txt, styles, rl_colors,
+                        Paragraph, Spacer, HRFlowable)
+        is_perc = self._get_is_perc()
+        headers = ["SK","Carro","Placa","Cliente","Custo SK","Valor","Data SK","Status","NFI","IS"]
+        cw = [1.2*cm,4.5*cm,2.0*cm,3.5*cm,2.2*cm,2.2*cm,2.5*cm,2.5*cm,1.5*cm,2.0*cm]
+        rows = [headers]
+        for r in lista:
+            nfi  = r.get("nfi") or "SNF"
+            vv   = r.get("valor") or 0
+            is_v = int(float(vv) * is_perc/100) if nfi == "CNF" else 0
+            rows.append([
+                r.get("sk_num") or str(r.get("id","")),
+                (r.get("c_nome") or r.get("carro",""))[:30],
+                r.get("c_placa") or r.get("placa",""),
+                (r.get("cli_nome") or "")[:22],
+                f"¥{int(r.get('custo_sk') or 0):,}",
+                f"¥{int(float(vv)):,}",
+                r.get("data_shaken") or "",
+                r.get("status_label") or r.get("status",""),
+                nfi,
+                f"¥{is_v:,}" if is_v else "—",
+            ])
+        story.append(self._rl_table(rows, cw, rl_colors, Table, TableStyle))
+        doc.build(story)
+        _mb.showinfo("PDF", "PDF gerado com sucesso!"); self._open_file(path)
+
+    def _exportar_shaken_excel(self):
+        from tkinter import messagebox as _mb
+        lista = getattr(self, "_shaken_lista_filtrada", None)
+        if not lista:
+            _mb.showwarning("Excel", "Nenhum shaken para exportar."); return
+        path = self._save_excel_dialog("historico_shaken")
+        if not path: return
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        except ImportError:
+            _mb.showerror("Excel", "Instale openpyxl: pip install openpyxl"); return
+        wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Shaken"
+        is_perc = self._get_is_perc()
+        hdr_fill = PatternFill("solid", fgColor="4361EE")
+        hdr_font = Font(bold=True, color="FFFFFF", size=9)
+        bd = Border(left=Side(style="thin"), right=Side(style="thin"),
+                    top=Side(style="thin"), bottom=Side(style="thin"))
+        headers = ["SK","Carro","Placa","Cliente","Custo SK","Valor","Data SK","Status","NFI","IS"]
+        for ci, h in enumerate(headers, 1):
+            c = ws.cell(row=1, column=ci, value=h)
+            c.fill = hdr_fill; c.font = hdr_font
+            c.alignment = Alignment(horizontal="center"); c.border = bd
+        for ci, w in enumerate([8,28,12,22,12,12,14,14,7,12], 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(ci)].width = w
+        alt = PatternFill("solid", fgColor="F0F4FF")
+        for ri, r in enumerate(lista, 2):
+            nfi  = r.get("nfi") or "SNF"
+            vv   = float(r.get("valor") or 0)
+            is_v = int(vv * is_perc/100) if nfi == "CNF" else 0
+            row_data = [
+                r.get("sk_num") or str(r.get("id","")),
+                r.get("c_nome") or r.get("carro",""),
+                r.get("c_placa") or r.get("placa",""),
+                r.get("cli_nome",""),
+                int(r.get("custo_sk") or 0),
+                int(vv), r.get("data_shaken",""),
+                r.get("status_label") or r.get("status",""),
+                nfi, is_v,
+            ]
+            fill = alt if ri % 2 == 0 else None
+            for ci, val in enumerate(row_data, 1):
+                c = ws.cell(row=ri, column=ci, value=val)
+                c.border = bd
+                c.alignment = Alignment(horizontal="left" if ci in (2,3,4) else "center",
+                                        vertical="center")
+                if fill: c.fill = fill
+                if ci == 9 and nfi == "CNF":
+                    c.fill = PatternFill("solid", fgColor="FFE5B4")
+        ws.freeze_panes = "A2"
+        wb.save(path)
+        _mb.showinfo("Excel", "Excel gerado com sucesso!"); self._open_file(path)
+
+    # ── OS ────────────────────────────────────────────────────────────────────
+    def _exportar_os_pdf(self):
+        from tkinter import messagebox as _mb
+        lista = getattr(self, "_servicos_lista_filtrada", None)
+        if not lista:
+            _mb.showwarning("PDF", "Nenhuma OS para exportar."); return
+        path = self._save_pdf_dialog("historico_os")
+        if not path: return
+        try:
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
+                                             Spacer, HRFlowable, Paragraph)
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib import colors as rl_colors
+            from reportlab.lib.units import cm
+        except ImportError:
+            _mb.showerror("PDF", "Instale reportlab: pip install reportlab"); return
+        styles = getSampleStyleSheet()
+        doc = SimpleDocTemplate(path, pagesize=landscape(A4),
+                                leftMargin=1.5*cm, rightMargin=1.5*cm,
+                                topMargin=1.5*cm, bottomMargin=1.5*cm)
+        story = []
+        nfi_f    = getattr(self, "_serv_filtro_nfi",    None)
+        mes_f    = getattr(self, "_serv_filtro_mes",    None)
+        ano_f    = getattr(self, "_serv_filtro_ano",    None)
+        status_f = getattr(self, "_serv_filtro_status", None)
+        filtros_txt = f"NFI: {nfi_f.get() if nfi_f else 'Todos'} | " \
+                      f"Mês: {mes_f.get() if mes_f else 'Todos'} | " \
+                      f"Ano: {ano_f.get() if ano_f else 'Todos'} | " \
+                      f"Status: {status_f.get() if status_f else 'Todos'} | " \
+                      f"{len(lista)} registro(s)"
+        self._rl_header(story, "Histórico de Ordens de Serviço", filtros_txt, styles, rl_colors,
+                        Paragraph, Spacer, HRFlowable)
+        is_perc = self._get_is_perc()
+        headers = ["OS","Data","Carro","Cliente","Tipo","Valor","IS","Status","NFI"]
+        cw = [1.8*cm,2.2*cm,4.5*cm,3.5*cm,3.5*cm,2.5*cm,2.0*cm,2.5*cm,1.5*cm]
+        rows = [headers]
+        for s in lista:
+            nfi  = s.get("nfi") or "SNF"
+            vv   = float(s.get("valor") or 0)
+            is_v = int(vv * is_perc/100) if nfi == "CNF" else 0
+            # busca nome cliente
+            try:
+                cli_r = self.conn.execute(
+                    "SELECT nome FROM clientes WHERE id=?", (s.get("cliente_id"),)).fetchone()
+                cli_nome = cli_r[0] if cli_r else ""
+            except Exception:
+                cli_nome = ""
+            rows.append([
+                s.get("os_num") or str(s.get("id","")),
+                s.get("data_servico",""),
+                (s.get("carro",""))[:30],
+                cli_nome[:22],
+                (s.get("tipo_servico",""))[:22],
+                f"¥{int(vv):,}",
+                f"¥{is_v:,}" if is_v else "—",
+                s.get("status",""),
+                nfi,
+            ])
+        story.append(self._rl_table(rows, cw, rl_colors, Table, TableStyle))
+        doc.build(story)
+        _mb.showinfo("PDF", "PDF gerado com sucesso!"); self._open_file(path)
+
+    def _exportar_os_excel(self):
+        from tkinter import messagebox as _mb
+        lista = getattr(self, "_servicos_lista_filtrada", None)
+        if not lista:
+            _mb.showwarning("Excel", "Nenhuma OS para exportar."); return
+        path = self._save_excel_dialog("historico_os")
+        if not path: return
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        except ImportError:
+            _mb.showerror("Excel", "Instale openpyxl: pip install openpyxl"); return
+        wb = openpyxl.Workbook(); ws = wb.active; ws.title = "OS"
+        is_perc = self._get_is_perc()
+        hdr_fill = PatternFill("solid", fgColor="4361EE")
+        hdr_font = Font(bold=True, color="FFFFFF", size=9)
+        bd = Border(left=Side(style="thin"), right=Side(style="thin"),
+                    top=Side(style="thin"), bottom=Side(style="thin"))
+        headers = ["OS","Data","Carro","Cliente","Tipo Serviço","Valor","IS","Status","NFI"]
+        for ci, h in enumerate(headers, 1):
+            c = ws.cell(row=1, column=ci, value=h)
+            c.fill = hdr_fill; c.font = hdr_font
+            c.alignment = Alignment(horizontal="center"); c.border = bd
+        for ci, w in enumerate([10,12,28,22,24,14,12,14,7], 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(ci)].width = w
+        alt = PatternFill("solid", fgColor="F0F4FF")
+        for ri, s in enumerate(lista, 2):
+            nfi  = s.get("nfi") or "SNF"
+            vv   = float(s.get("valor") or 0)
+            is_v = int(vv * is_perc/100) if nfi == "CNF" else 0
+            try:
+                cli_r = self.conn.execute(
+                    "SELECT nome FROM clientes WHERE id=?", (s.get("cliente_id"),)).fetchone()
+                cli_nome = cli_r[0] if cli_r else ""
+            except Exception:
+                cli_nome = ""
+            row_data = [
+                s.get("os_num") or str(s.get("id","")),
+                s.get("data_servico",""), s.get("carro",""),
+                cli_nome, s.get("tipo_servico",""),
+                int(vv), is_v, s.get("status",""), nfi,
+            ]
+            fill = alt if ri % 2 == 0 else None
+            for ci, val in enumerate(row_data, 1):
+                c = ws.cell(row=ri, column=ci, value=val)
+                c.border = bd
+                c.alignment = Alignment(horizontal="left" if ci in (3,4,5) else "center",
+                                        vertical="center")
+                if fill: c.fill = fill
+                if ci == 9 and nfi == "CNF":
+                    c.fill = PatternFill("solid", fgColor="FFE5B4")
+        ws.freeze_panes = "A2"
+        wb.save(path)
+        _mb.showinfo("Excel", "Excel gerado com sucesso!"); self._open_file(path)
+
+    def _cfg_load(self):
+        import json, os, sys as _sys
+        base = os.path.dirname(_sys.executable) if getattr(_sys,"frozen",False) else os.path.dirname(os.path.abspath(__file__))
+        try:
+            with open(os.path.join(base, "kmcars_config.json"), encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _cfg_save(self, cfg):
+        import json, os, sys as _sys
+        base = os.path.dirname(_sys.executable) if getattr(_sys,"frozen",False) else os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(base, "kmcars_config.json"), "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+    def _cfg_apply_on_startup(self):
+        cfg = self._cfg_load()
+        j = cfg.get("janela", "maximized")
+        if j == "maximized":
+            self.after(100, lambda: self.state("zoomed"))
+        elif "x" in j:
+            w2, h2 = j.split("x")
+            self.geometry(f"{w2}x{h2}")
 
     def _build_placeholder(self, parent, page):
         center = tk.Frame(parent, bg=COLORS["bg_content"])
@@ -12249,6 +15000,18 @@ class KMCars(tk.Tk):
         self.entry_tel.pack(ipady=7)
         self.entry_tel.bind("<KeyRelease>", self._fmt_telefone_jp)
 
+        tk.Label(form_card, text="Cidade",
+                 font=("Helvetica", 9, "bold"),
+                 bg=COLORS["bg_card"], fg=COLORS["text_secondary"]).pack(anchor="w", padx=20)
+        self.entry_cidade = tk.Entry(form_card, font=("Helvetica", 11),
+                                     bg=COLORS["bg_main"], fg=COLORS["text_primary"],
+                                     insertbackground=COLORS["text_primary"],
+                                     relief="flat", bd=0,
+                                     highlightthickness=1,
+                                     highlightbackground=COLORS["border"],
+                                     highlightcolor=COLORS["accent"], width=28)
+        self.entry_cidade.pack(padx=20, pady=(4, 14), ipady=7)
+
         self.lbl_status = tk.Label(form_card, text="", font=("Helvetica", 8),
                                    bg=COLORS["bg_card"], fg=COLORS["red"])
         self.lbl_status.pack(padx=20)
@@ -12281,6 +15044,9 @@ class KMCars(tk.Tk):
         tk.Label(tbl_header, text="▦  Clientes Cadastrados",
                  font=("Helvetica", 11, "bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(tbl_header, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=self._refresh_tabela_clientes).pack(side="right", padx=(8,0))
         self.lbl_total = tk.Label(tbl_header, text="0 registros", font=("Helvetica", 8),
                                   bg=COLORS["bg_card"], fg=COLORS["text_muted"])
         self.lbl_total.pack(side="right")
@@ -12335,8 +15101,9 @@ class KMCars(tk.Tk):
         self._refresh_tabela_clientes()
 
     def _salvar_cliente(self):
-        nome = self.entry_nome.get().strip()
-        tel  = self.entry_tel.get().strip()
+        nome   = self.entry_nome.get().strip()
+        tel    = self.entry_tel.get().strip()
+        cidade = self.entry_cidade.get().strip()
 
         if not nome:
             self.lbl_status.configure(text="⚠ Informe o nome do cliente.", fg=COLORS["red"])
@@ -12345,15 +15112,22 @@ class KMCars(tk.Tk):
             self.lbl_status.configure(text="⚠ Telefone inválido.", fg=COLORS["red"])
             return
 
+        # Garante que coluna cidade existe
+        try:
+            self.conn.execute("ALTER TABLE clientes ADD COLUMN cidade TEXT DEFAULT ''")
+            self.conn.commit()
+        except Exception:
+            pass
+
         if self._cliente_edit_id is not None:
-            self.conn.execute("UPDATE clientes SET nome=?, telefone=? WHERE id=?",
-                              (nome, tel, self._cliente_edit_id))
+            self.conn.execute("UPDATE clientes SET nome=?, telefone=?, cidade=? WHERE id=?",
+                              (nome, tel, cidade, self._cliente_edit_id))
             self.conn.commit()
             self.lbl_status.configure(text="✔ Cliente atualizado!", fg=COLORS["green"])
             self._cliente_edit_id = None
             self.btn_salvar.configure(text="  Salvar  ")
         else:
-            self.conn.execute("INSERT INTO clientes (nome, telefone) VALUES (?, ?)", (nome, tel))
+            self.conn.execute("INSERT INTO clientes (nome, telefone, cidade) VALUES (?, ?, ?)", (nome, tel, cidade))
             self.conn.commit()
             self.lbl_status.configure(text="✔ Cliente cadastrado!", fg=COLORS["green"])
 
@@ -12365,6 +15139,7 @@ class KMCars(tk.Tk):
     def _limpar_form_cliente(self, clear_status=True):
         self.entry_nome.delete(0, tk.END)
         self.entry_tel.delete(0, tk.END)
+        self.entry_cidade.delete(0, tk.END)
         self._cliente_edit_id = None
         self.btn_salvar.configure(text="  Salvar  ")
         if clear_status:
@@ -12378,6 +15153,8 @@ class KMCars(tk.Tk):
                 self.entry_nome.insert(0, c["nome"])
                 self.entry_tel.delete(0, tk.END)
                 self.entry_tel.insert(0, c["telefone"])
+                self.entry_cidade.delete(0, tk.END)
+                self.entry_cidade.insert(0, c.get("cidade") or "")
                 self.btn_salvar.configure(text="  Atualizar  ")
                 self.lbl_status.configure(text="", fg=COLORS["red"])
                 break
@@ -13026,6 +15803,8 @@ class KMCars(tk.Tk):
         self._custo_edit_id      = None
         self._custo_filtro_carro = tk.StringVar(value="Todos")
         self._custo_filtro_tipo  = tk.StringVar(value="Todos")
+        self._custo_filtro_mes   = tk.StringVar(value="Todos")
+        self._custo_filtro_ano   = tk.StringVar(value="Todos")
 
         container = tk.Frame(parent, bg=COLORS["bg_content"])
         container.pack(fill="both", expand=True, padx=24, pady=20)
@@ -13145,8 +15924,31 @@ class KMCars(tk.Tk):
                   bg=COLORS["border"], fg=COLORS["text_secondary"],
                   relief="flat", cursor="hand2", padx=6,
                   command=lambda: [self._custo_filtro_carro.set("Todos"),
-                                   self._custo_filtro_tipo.set("Todos")]
+                                   self._custo_filtro_tipo.set("Todos"),
+                                   self._custo_filtro_mes.set("Todos"),
+                                   self._custo_filtro_ano.set("Todos")]
                   ).pack(side="left", padx=(8, 0), ipady=3)
+
+        # Filtro Mês / Ano
+        import datetime as _custo_dt
+        _anos_c  = ["Todos"] + [str(y) for y in range(_custo_dt.date.today().year, 2019, -1)]
+        _meses_c = ["Todos","01","02","03","04","05","06","07","08","09","10","11","12"]
+        filt_bar2 = tk.Frame(table_card, bg=COLORS["bg_main"])
+        filt_bar2.pack(fill="x", padx=20, pady=(0, 4))
+        tk.Label(filt_bar2, text="Mês:", font=("Helvetica", 8, "bold"),
+                 bg=COLORS["bg_main"], fg=COLORS["text_secondary"]).pack(side="left", padx=(0,4))
+        ttk.Combobox(filt_bar2, textvariable=self._custo_filtro_mes,
+                     values=_meses_c, state="readonly",
+                     font=("Helvetica", 9), width=5
+                     ).pack(side="left", padx=(0,8), ipady=3)
+        tk.Label(filt_bar2, text="Ano:", font=("Helvetica", 8, "bold"),
+                 bg=COLORS["bg_main"], fg=COLORS["text_secondary"]).pack(side="left", padx=(0,4))
+        ttk.Combobox(filt_bar2, textvariable=self._custo_filtro_ano,
+                     values=_anos_c, state="readonly",
+                     font=("Helvetica", 9), width=7
+                     ).pack(side="left", padx=(0,8), ipady=3)
+        self._custo_filtro_mes.trace_add("write", lambda *_: self._refresh_tabela_custos())
+        self._custo_filtro_ano.trace_add("write", lambda *_: self._refresh_tabela_custos())
 
         tk.Frame(table_card, bg=COLORS["border"], height=1).pack(fill="x", padx=20)
 
@@ -13313,10 +16115,25 @@ class KMCars(tk.Tk):
             "LEFT JOIN compras co ON cu.compra_id=co.id ORDER BY cu.id DESC"
         ).fetchall()]
 
+        fmes_c = getattr(self, "_custo_filtro_mes", None)
+        fano_c = getattr(self, "_custo_filtro_ano", None)
+        fmes_c = fmes_c.get() if fmes_c else "Todos"
+        fano_c = fano_c.get() if fano_c else "Todos"
+
         if fc != "Todos":
             rows = [r for r in rows if (r.get("carro") or "") == fc]
         if ft != "Todos":
             rows = [r for r in rows if r.get("tipo_custo") == ft]
+        if fmes_c != "Todos" or fano_c != "Todos":
+            def _match_data_custo(r):
+                d = r.get("data_custo") or ""
+                pts = d.split("/")
+                rm = pts[1] if len(pts) > 1 else ""
+                ra = pts[2] if len(pts) > 2 else ""
+                if fmes_c != "Todos" and rm != fmes_c: return False
+                if fano_c != "Todos" and ra != fano_c: return False
+                return True
+            rows = [r for r in rows if _match_data_custo(r)]
 
         self.lbl_total_custos.configure(text=f"{len(rows)} registro(s)")
         if not rows:
@@ -13417,6 +16234,9 @@ class KMCars(tk.Tk):
         tbl_h.pack(fill="x", padx=20, pady=(14, 4))
         tk.Label(tbl_h, text="▦  Tipos Cadastrados", font=("Helvetica", 11, "bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(tbl_h, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=self._refresh_tabela_tc).pack(side="right", padx=(8,0))
         self.lbl_total_tc = tk.Label(tbl_h, text="", font=("Helvetica", 8),
                                      bg=COLORS["bg_card"], fg=COLORS["text_muted"])
         self.lbl_total_tc.pack(side="right")
@@ -13614,6 +16434,9 @@ class KMCars(tk.Tk):
         tk.Label(tbl_h, text="▦  Categorias Cadastradas",
                  font=("Helvetica", 11, "bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(tbl_h, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=self._refresh_tabela_catdf).pack(side="right", padx=(8,0))
         self._lbl_total_catdf = tk.Label(tbl_h, text="",
                                          font=("Helvetica", 8),
                                          bg=COLORS["bg_card"], fg=COLORS["text_muted"])
@@ -13937,9 +16760,9 @@ class KMCars(tk.Tk):
 
         # ── Tabela com canvas dual (header + body) para alinhamento pixel-perfect ──
         COMP_COLS = [
-            ("#", 32), ("Data", 72), ("Carro", 115), ("Cor", 52), ("Placa", 62),
-            ("Cliente", 95), ("Tipo", 70), ("V.Compra", 78), ("Custo", 78),
-            ("Total", 82), ("Shaken", 82), ("St.SK", 62), ("Ações", 88),
+            ("#", 35), ("Data", 80), ("Carro", 120), ("Cor", 55), ("Placa", 65),
+            ("Cliente", 100), ("Tipo", 75), ("V.Compra", 82), ("Custo", 82),
+            ("Total", 86), ("Shaken", 86), ("St.SK", 65), ("Ações", 120),
         ]
         self._comp_cols = COMP_COLS
         COMP_TOTAL_W = sum(c[1] for c in COMP_COLS)
@@ -14774,6 +17597,9 @@ class KMCars(tk.Tk):
         tk.Label(hdr, text="▦  Veículos À Venda",
                  font=("Helvetica", 14, "bold"),
                  bg=COLORS["bg_content"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(hdr, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=self._refresh_estoque_veiculos).pack(side="right", padx=(8,0))
         self.lbl_estoque_total = tk.Label(hdr, text="0 veículos",
                                           font=("Helvetica", 9),
                                           bg=COLORS["bg_content"], fg=COLORS["text_muted"])
