@@ -622,6 +622,30 @@ class KMCars(tk.Tk):
         for page in SUBMENUS:
             self.nav_buttons[page] = self._make_nav_btn(page)
 
+        # ── Tutorial button ───────────────────────────────────────────────────
+        tk.Frame(self.sidebar, bg="#676E7E", height=1).pack(fill="x", padx=18, pady=(10,6))
+        tut_btn = tk.Frame(self.sidebar, bg=COLORS["bg_sidebar"], cursor="hand2")
+        tut_btn.pack(fill="x", padx=10, pady=(0,4))
+        tk.Label(tut_btn, text="?", font=("Helvetica", 13, "bold"),
+                 bg=COLORS["bg_sidebar"], fg="#F59E0B",
+                 width=3, anchor="center").pack(side="left", padx=(8,0), pady=8)
+        tk.Label(tut_btn, text="Tutorial", font=self.fnt_nav,
+                 bg=COLORS["bg_sidebar"], fg=COLORS["text_sidebar"],
+                 anchor="w").pack(side="left", padx=4)
+        def _tut_hover_on(e):
+            tut_btn.configure(bg="#4A5568")
+            for ch in tut_btn.winfo_children(): ch.configure(bg="#4A5568")
+        def _tut_hover_off(e):
+            tut_btn.configure(bg=COLORS["bg_sidebar"])
+            for ch in tut_btn.winfo_children(): ch.configure(bg=COLORS["bg_sidebar"])
+        tut_btn.bind("<Button-1>", lambda e: self._abrir_tutorial())
+        tut_btn.bind("<Enter>", _tut_hover_on)
+        tut_btn.bind("<Leave>", _tut_hover_off)
+        for _ch in tut_btn.winfo_children():
+            _ch.bind("<Button-1>", lambda e: self._abrir_tutorial())
+            _ch.bind("<Enter>", _tut_hover_on)
+            _ch.bind("<Leave>", _tut_hover_off)
+
         # ── Bottom: FTM Dev ───────────────────────────────────────────────────
         self.sidebar.pack_propagate(False)
         bottom = tk.Frame(self.sidebar, bg=COLORS["bg_sidebar"])
@@ -646,6 +670,372 @@ class KMCars(tk.Tk):
         if self.ftm_photo:
             tk.Label(ftm_row, image=self.ftm_photo,
                      bg=COLORS["bg_sidebar"]).pack(side="left")
+
+    def _abrir_tutorial(self):
+        """Abre janela flutuante do Tutorial com busca por substring."""
+        # Se já existe, traz para frente
+        if hasattr(self, "_tutorial_win") and self._tutorial_win and                 self._tutorial_win.winfo_exists():
+            self._tutorial_win.lift()
+            self._tutorial_win.focus_set()
+            return
+
+        win = tk.Toplevel(self)
+        win.title("❓  KM Cars — Tutorial do Sistema")
+        win.configure(bg=COLORS["bg_card"])
+        win.geometry("760x600")
+        win.minsize(500, 400)
+        self._tutorial_win = win
+
+        # Conteúdo completo do tutorial (seções separadas por ##)
+        TUTORIAL_RAW = """
+# KM Cars — Guia do Sistema
+
+## ESTRUTURA GERAL
+O sistema KM Cars é dividido em módulos: Dashboard, Compras, Vendas, Serviço, Parcelamentos e Configurações.
+
+## CADASTROS BASE — PRÉ-REQUISITOS
+Antes de registrar compras, vendas ou serviços:
+• Clientes — cadastre nome e telefone. Sem cliente não é possível registrar compras, vendas ou OS.
+• Carros — cadastre com nome, ano, cor, placa, chassi e status.
+
+Status de um carro:
+  Estoque  → carro disponível para venda
+  Cliente  → pertence a um cliente, aparece em OS e Shaken
+  Daisha   → veículo substituto emprestado
+  Inativo  → arquivado, não aparece em nenhuma seleção
+
+## FLUXO DE COMPRA
+Passo a passo: Cadastrar Carro → Registrar Compra → (opcional) Adicionar Custos
+
+Tipos de compra:
+  Compra Direta  → compra simples de fornecedor
+  Troca          → carro entrou como parte de uma troca
+  Leilão         → gera custos automáticos (taxa exposição e kensa)
+
+Marcar como \"À Venda\":
+• Na lista de compras, clique em \"À Venda\" para disponibilizar no estoque.
+• Carro não marcado como \"À Venda\" NÃO aparece ao criar uma Venda.
+
+NFI (Nota Fiscal de Importação):
+  SNF = Sem Nota Fiscal
+  CNF = Com Nota Fiscal → gera IS automático sobre o valor
+
+## FLUXO DE VENDA
+
+Venda Simples:
+• Carro marcado \"À Venda\" + cliente cadastrado
+
+Venda Parcelada:
+• Requer número de parcelas, entrada e valor da parcela mensal
+
+Venda com Troca ⚠️ (mais complexa):
+  PRÉ-REQUISITOS OBRIGATÓRIOS:
+  1. Carro principal: cadastrado + marcado \"À Venda\"
+  2. Carro de troca: cadastrado em Carros
+  3. Carro de troca: compra registrada no sistema (mesmo simbólica)
+  4. Carro de troca: status Estoque ou marcado \"À Venda\"
+
+  PASSO A PASSO:
+  1. Cadastrar carro principal → registrar compra → marcar À Venda
+  2. Cadastrar carro de troca recebido do cliente
+  3. Registrar compra do carro de troca (tipo \"Troca\")
+  4. Nova Venda → tipo \"Com Troca\" → selecionar ambos os carros
+  5. Informar valor da troca (deduzido do total)
+
+  Se o carro de troca não tiver compra registrada, NÃO aparecerá na lista.
+
+Venda Leilão:
+• Gera automaticamente custos de Taxa de Exposição e Taxa de Kensa
+
+IS Automático em Vendas (CNF):
+• Se CNF, o IS é calculado sobre o valor de venda
+• Registrado como custo na compra vinculada
+• Se o valor for editado, o IS é atualizado sem duplicar
+
+## FLUXO DE SERVIÇO (OS — Ordem de Serviço)
+
+Pré-requisitos:
+• Carro com status \"Cliente\"
+• Carro com cliente vinculado (em Carros Cadastrados)
+• Cliente cadastrado no sistema
+
+Como criar uma OS:
+• Serviço → Ordem de Serviço
+• No campo Cliente: digite para filtrar. Os carros se filtram automaticamente para o cliente selecionado.
+• Apenas carros com status \"Cliente\" aparecem na seleção.
+
+Status de OS:
+  Em Andamento   → em progresso
+  Concluído      → finalizado (entra nos cálculos de receita e lucro)
+
+Apenas OS com status \"Concluído\" entram nos cálculos de receita e lucro.
+
+## FLUXO DE SHAKEN
+
+Shaken é a inspeção veicular obrigatória no Japão.
+
+Por status do carro:
+  Cliente  → gera receita (cliente paga). Custos vão para custos_sk
+  Estoque  → custo de preparação. Vai para custos da compra
+  Daisha   → registrado, sem cobrança
+
+Opção \"Por Conta\":
+• Sem data de vencimento, não aparece nos alertas.
+
+Alertas — Dashboard \"Shaken a Vencer\":
+• Exibe carros com vencimento em até 90 dias ou vencidos
+• Carros sem shaken registrado também aparecem para controle
+
+## CUSTOS E IS
+
+Tipos de custo por tabela:
+  custos     → vinculado à Compra
+  custos_os  → vinculado à OS
+  custos_sk  → vinculado ao Shaken
+
+IS (Imposto sobre Serviço):
+• Calculado quando NFI = CNF
+• Percentual configurável em Configurações → IS
+• Gerado sobre: valor da venda, OS ou Shaken
+• Anti-duplicação: ao editar o valor, o IS existente é atualizado, não duplicado
+
+Nos relatórios:
+  Custo s/IS  = custos sem IS
+  IS (CNF)    = apenas o imposto
+  Custo Total = Custo s/IS + IS
+
+## DASHBOARD E RELATÓRIOS
+
+Visão Geral:
+• KPIs do mês: estoque, vendas, serviços, financiamentos, shaken
+• Cards de receita e quantidade (Vendas + OS + Shaken) do mês e do ano
+• Gráficos anuais com tooltip ao passar o mouse
+
+Indicadores:
+• Aba Receita: pizza de distribuição por tipo no mês
+• Aba Lucro: pizza de distribuição de lucro por tipo
+
+Relatório Mensal:
+• Detalhamento por mês: Vendas, OS, Shaken
+• Despesas Fixas + Resumo Consolidado com Lucro Líquido
+
+Relatório Anual:
+• 12 meses do ano com gráfico Receita Mensal e Lucro Mensal
+• Valores negativos (prejuízo) em vermelho
+
+Dossiê do Veículo:
+• Histórico completo: compras, vendas, OS, shaken
+• Dashboard → Dossiê Carro
+• Se inativado: mostra data e motivo da inativação
+
+Estoque Cliente (PDF):
+• Dashboard → Estoque → Gerar PDF Cliente
+• Mostra carros \"À Venda\" com Valor de Venda (preço a prazo) e data do Shaken
+• Shaken ausente ou vencido → exibe \"2 anos\"
+
+## TABELA DE AMARRAÇÕES RÁPIDAS
+
+Registrar Compra:
+  Precisa: Carro cadastrado + Cliente (vendedor) cadastrado
+
+Registrar Venda simples:
+  Precisa: Compra registrada + Carro marcado \"À Venda\" + Cliente comprador
+
+Venda com Troca:
+  Precisa: Tudo da venda simples + Carro de troca cadastrado + Compra do carro de troca registrada
+
+Criar OS:
+  Precisa: Carro com status \"Cliente\" + Cliente vinculado ao carro + Tipo de Serviço cadastrado
+
+Registrar Shaken:
+  Precisa: Carro cadastrado (qualquer status exceto Inativo)
+
+Carro aparecer no Estoque (vendas):
+  Precisa: Status \"Estoque\" + marcado \"À Venda\"
+
+Carro aparecer nas OS:
+  Precisa: Status \"Cliente\"
+
+IS gerado automaticamente:
+  Precisa: NFI = CNF + valor preenchido
+
+Lucro OS aparecer:
+  Precisa: OS com status \"Concluído\"
+
+Despesa entrar no Lucro Mensal:
+  Precisa: Despesa Fixa com mês de referência correto ou marcada como Recorrente
+
+## ERROS COMUNS E SOLUÇÕES
+
+Carro não aparece na venda:
+  Causa: Não marcado como \"À Venda\"
+  Solução: Histórico de Compras → botão \"À Venda\"
+
+Carro de troca não aparece:
+  Causa: Sem compra registrada no sistema
+  Solução: Registrar compra do carro de troca
+
+OS sem carros disponíveis:
+  Causa: Nenhum carro com status \"Cliente\"
+  Solução: Alterar status do carro em Carros Cadastrados
+
+Despesas não aparecem no relatório:
+  Causa: Mês de referência errado ou ausente
+  Solução: Verificar campo \"Mês de Referência\" na despesa
+
+Lucro OS zerado:
+  Causa: OS não marcada como Concluído
+  Solução: Alterar status da OS para \"Concluído\"
+
+Shaken não aparece no alerta:
+  Causa: Marcado como \"Por Conta\"
+  Solução: Desmarcar \"Por Conta\" ou verificar data"""
+
+        # Divide em blocos por seção para facilitar busca
+        import re as _re
+        secoes = []
+        bloco_atual = []
+        for linha in TUTORIAL_RAW.splitlines():
+            if linha.startswith("## ") and bloco_atual:
+                secoes.append("\n".join(bloco_atual))  # fixed
+                bloco_atual = [linha]
+            else:
+                bloco_atual.append(linha)
+        if bloco_atual:
+            secoes.append("\n".join(bloco_atual))  # fixed
+
+        # ── Barra superior ────────────────────────────────────────────────────
+        top_bar = tk.Frame(win, bg=COLORS["accent"], height=4)
+        top_bar.pack(fill="x")
+
+        hdr = tk.Frame(win, bg="#1E293B")
+        hdr.pack(fill="x", padx=0)
+        tk.Label(hdr, text="❓  Tutorial do Sistema — KM Cars",
+                 font=("Helvetica", 11, "bold"),
+                 bg="#1E293B", fg="white").pack(side="left", padx=16, pady=10)
+
+        # ── Barra de busca ────────────────────────────────────────────────────
+        search_bar = tk.Frame(win, bg=COLORS["bg_main"],
+                              highlightthickness=1,
+                              highlightbackground=COLORS["border"])
+        search_bar.pack(fill="x", padx=12, pady=(10, 4))
+
+        tk.Label(search_bar, text="🔍", font=("Helvetica", 10),
+                 bg=COLORS["bg_main"], fg=COLORS["text_muted"]
+                 ).pack(side="left", padx=(8, 4), pady=6)
+        _tut_search = tk.StringVar()
+        _search_entry = tk.Entry(search_bar, textvariable=_tut_search,
+                                  font=("Helvetica", 10),
+                                  bg=COLORS["bg_main"], fg=COLORS["text_primary"],
+                                  insertbackground=COLORS["text_primary"],
+                                  relief="flat", bd=0)
+        _search_entry.pack(side="left", fill="x", expand=True, ipady=5)
+        _result_lbl = tk.Label(search_bar, text="",
+                                font=("Helvetica", 8),
+                                bg=COLORS["bg_main"], fg=COLORS["text_muted"])
+        _result_lbl.pack(side="right", padx=8)
+        tk.Button(search_bar, text="✕", font=("Helvetica", 8),
+                  bg=COLORS["border"], fg=COLORS["text_secondary"],
+                  relief="flat", cursor="hand2", padx=4,
+                  command=lambda: _tut_search.set("")
+                  ).pack(side="right", padx=(0, 4), ipady=2)
+
+        # ── Área de texto com scroll ──────────────────────────────────────────
+        txt_frame = tk.Frame(win, bg=COLORS["bg_card"])
+        txt_frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+
+        vsb_t = tk.Scrollbar(txt_frame, orient="vertical")
+        vsb_t.pack(side="right", fill="y")
+
+        txt = tk.Text(txt_frame, font=("Courier", 9),
+                      bg=COLORS["bg_main"], fg=COLORS["text_primary"],
+                      insertbackground=COLORS["text_primary"],
+                      relief="flat", bd=0,
+                      wrap="word", state="disabled",
+                      yscrollcommand=vsb_t.set,
+                      highlightthickness=0,
+                      padx=14, pady=10,
+                      spacing1=2, spacing2=1, spacing3=4)
+        txt.pack(side="left", fill="both", expand=True)
+        vsb_t.configure(command=txt.yview)
+
+        # Tags de formatação
+        txt.tag_configure("h1",    font=("Helvetica", 13, "bold"),
+                          foreground=COLORS["accent"], spacing1=8, spacing3=4)
+        txt.tag_configure("h2",    font=("Helvetica", 10, "bold"),
+                          foreground="#F59E0B", spacing1=6, spacing3=2)
+        txt.tag_configure("body",  font=("Helvetica", 9),
+                          foreground=COLORS["text_primary"])
+        txt.tag_configure("muted", font=("Helvetica", 8),
+                          foreground=COLORS["text_muted"])
+        txt.tag_configure("hl",    background="#854D0E", foreground="white")
+        txt.tag_configure("sep",   font=("Helvetica", 5))
+
+        def _render(content_str, highlight_term=""):
+            txt.configure(state="normal")
+            txt.delete("1.0", "end")
+            for linha in content_str.splitlines():
+                if linha.startswith("# "):
+                    txt.insert("end", linha[2:] + "\n", "h1")
+                elif linha.startswith("## "):
+                    txt.insert("end", "\n" + linha[3:] + "\n", "h2")
+                elif linha.strip() == "":
+                    txt.insert("end", "\n", "sep")
+                elif linha.startswith("  ") or linha.startswith("    "):
+                    txt.insert("end", linha + "\n", "muted")
+                else:
+                    txt.insert("end", linha + "\n", "body")
+            # Highlight matches
+            if highlight_term:
+                start = "1.0"
+                count = 0
+                while True:
+                    pos = txt.search(highlight_term, start,
+                                     stopindex="end", nocase=True)
+                    if not pos:
+                        break
+                    end_pos = f"{pos}+{len(highlight_term)}c"
+                    txt.tag_add("hl", pos, end_pos)
+                    start = end_pos
+                    count += 1
+                _result_lbl.configure(
+                    text=f"{count} resultado(s)" if count else "Nenhum resultado",
+                    fg=COLORS["green"] if count else COLORS["red"])
+                if count:
+                    first = txt.search(highlight_term, "1.0", nocase=True)
+                    if first:
+                        txt.see(first)
+            else:
+                _result_lbl.configure(text="")
+            txt.configure(state="disabled")
+
+        # Renderização inicial
+        _render(TUTORIAL_RAW)
+
+        def _on_search(*_):
+            termo = _tut_search.get().strip()
+            if not termo:
+                _render(TUTORIAL_RAW)
+                return
+            # Filtra seções que contêm o termo
+            matches = [s for s in secoes if termo.lower() in s.lower()]
+            if matches:
+                _render("\n\n".join(matches), highlight_term=termo)
+                _render(TUTORIAL_RAW, highlight_term=termo)
+
+        _tut_search.trace_add("write", _on_search)
+        _search_entry.focus_set()
+
+        # Rodapé
+        foot = tk.Frame(win, bg="#1E293B")
+        foot.pack(fill="x")
+        tk.Label(foot, text="KM Cars — Sistema de Gestão  ·  Use a busca para encontrar tópicos rapidamente",
+                 font=("Helvetica", 7), bg="#1E293B",
+                 fg=COLORS["text_muted"]).pack(side="left", padx=12, pady=6)
+        tk.Button(foot, text="Fechar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat",
+                  cursor="hand2", padx=10, pady=3,
+                  command=win.destroy).pack(side="right", padx=10, pady=6)
 
     def _make_nav_btn(self, page):
         icon = NAV_ICONS.get(page, "•")
@@ -1309,6 +1699,10 @@ class KMCars(tk.Tk):
                   relief="flat", cursor="hand2",
                   command=self._limpar_form_venda
                   ).pack(side="left", padx=(8, 0), ipady=7, ipadx=4)
+        tk.Button(btn_f, text="↺", font=("Helvetica", 10, "bold"),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  command=self._refresh_tabela_vendas
+                  ).pack(side="left", padx=(8, 0), ipady=7, ipadx=6)
 
         self._refresh_tabela_vendas()
 
@@ -1472,6 +1866,31 @@ class KMCars(tk.Tk):
         except Exception:
             return 0
 
+    def _upsert_is(self, tabela, id_col, rec_id, valor_base, data):
+        """Insere ou atualiza IS em custos/custos_os/custos_sk sem duplicar."""
+        try:
+            is_perc = float(self.conn.execute(
+                "SELECT valor FROM configuracoes WHERE chave='is_percentual'"
+                ).fetchone()[0] or 10)
+        except Exception:
+            is_perc = 10.0
+        is_val = int(int(str(valor_base or "0").replace(",","")) * is_perc / 100)
+        if is_val <= 0:
+            return
+        existing = self.conn.execute(
+            f"SELECT id FROM {tabela} WHERE {id_col}=? AND tipo_custo='IS'",
+            (rec_id,)).fetchone()
+        if existing:
+            self.conn.execute(
+                f"UPDATE {tabela} SET valor=?, data_custo=? WHERE id=?",
+                (str(is_val), data or "", existing[0]))
+        else:
+            self.conn.execute(
+                f"INSERT INTO {tabela} ({id_col},tipo_custo,descricao,valor,data_custo) "
+                f"VALUES (?,?,?,?,?)",
+                (rec_id, "IS", "IS automático CNF", str(is_val), data or ""))
+        self.conn.commit()
+
     def _salvar_venda(self):
         tipo = self._venda_tipo_var.get().strip()
         carro_sel = self._venda_carro_var.get().strip()
@@ -1596,34 +2015,16 @@ class KMCars(tk.Tk):
             vid = cur.lastrowid
             self._lbl_venda_status.configure(text="✔ Venda registrada!", fg=COLORS["green"])
 
-        # IS automático para CNF
+        # IS automático para CNF (upsert — sem duplicar)
         if nfi_venda == "CNF":
-            try:
-                is_perc = float(self.conn.execute(
-                    "SELECT valor FROM configuracoes WHERE chave='is_percentual'"
-                    ).fetchone()[0] or 10)
-            except Exception:
-                is_perc = 10.0
-            vv_int = int(str(valor_venda or "0").replace(",",""))
-            is_val = int(vv_int * is_perc / 100)
-            if is_val > 0:
-                cid_is = compra_id_venda
-                if not cid_is and carro_id:
-                    cr_is = self.conn.execute(
-                        "SELECT id FROM compras WHERE carro_id=? ORDER BY id DESC LIMIT 1",
-                        (carro_id,)).fetchone()
-                    cid_is = cr_is[0] if cr_is else None
-                if cid_is:
-                    data_is = data_venda or ""
-                    self.conn.execute(
-                        "INSERT OR IGNORE INTO tipos_custo (nome) VALUES ('IS')")
-                    self.conn.execute(
-                        "INSERT INTO custos (compra_id,tipo_custo,descricao,valor,data_custo) "
-                        "VALUES (?,?,?,?,?)",
-                        (cid_is, "IS",
-                         "IS automático CNF",
-                         str(is_val), data_is))
-                    self.conn.commit()
+            cid_is = compra_id_venda
+            if not cid_is and carro_id:
+                cr_is = self.conn.execute(
+                    "SELECT id FROM compras WHERE carro_id=? ORDER BY id DESC LIMIT 1",
+                    (carro_id,)).fetchone()
+                cid_is = cr_is[0] if cr_is else None
+            if cid_is:
+                self._upsert_is("custos", "compra_id", cid_is, valor_venda, data_venda)
 
         # Taxas de Leilão de Venda — gerar custos automáticos
         if tipo == "Venda Leilão":
@@ -5657,12 +6058,14 @@ class KMCars(tk.Tk):
         self._sk_carro_var   = tk.StringVar(value="")
         self._sk_carro_combo = ttk.Combobox(
             fcard, textvariable=self._sk_carro_var,
-            state="readonly", font=("Helvetica", 9), width=30)
+            state="normal", font=("Helvetica", 9), width=30)
         self._sk_carro_combo.pack(padx=18, pady=(4, 10), ipady=4)
         self._sk_carro_combo.bind("<ButtonPress>",
                                   lambda e: self._sk_atualizar_carros())
         self._sk_carro_combo.bind("<<ComboboxSelected>>",
                                   lambda e: self._sk_on_carro_select())
+        self._sk_carro_combo.bind("<KeyRelease>",
+                                  lambda e: self._sk_filtrar_carros_substring())
 
         # ── Campos condicionais num container dinâmico ─────────────────
         # (cliente, valor, data shaken — show/hide via _sk_update_form_visibility)
@@ -5743,6 +6146,10 @@ class KMCars(tk.Tk):
             relief="flat", cursor="hand2",
             command=self._limpar_form_shaken
         ).pack(side="left", padx=(8, 0), ipady=7, ipadx=4)
+        tk.Button(btn_f, text="↺", font=("Helvetica", 10, "bold"),
+                  bg=COLORS["blue"], fg="white", relief="flat", cursor="hand2",
+                  command=self._refresh_shaken
+                  ).pack(side="left", padx=(8, 0), ipady=7, ipadx=6)
 
         # Inicializa
         self._sk_atualizar_num()
@@ -5809,8 +6216,17 @@ class KMCars(tk.Tk):
                     f"{cid} — {c['carro']} {c.get('ano') or ''}"
                     f" [{st}] | {c.get('placa') or '—'}")
 
+        self._sk_carro_opts_all = opts[:]
         self._sk_carro_combo["values"] = (
             opts if opts else ["Nenhum carro disponível"])
+
+    def _sk_filtrar_carros_substring(self):
+        termo = self._sk_carro_var.get().lower()
+        todos = getattr(self, "_sk_carro_opts_all", [])
+        if not todos:
+            return
+        filtrado = [o for o in todos if termo in o.lower()] if termo else todos
+        self._sk_carro_combo["values"] = filtrado if filtrado else todos
 
     def _sk_on_carro_select(self):
         """Ao selecionar carro: determina tipo, reseta cliente, atualiza form."""
@@ -5962,6 +6378,11 @@ class KMCars(tk.Tk):
                 "custo_shaken=?,data_vencimento=?,por_conta=?,obs=?,nfi=? WHERE id=?",
                 (carro_id, cliente_id, valor, custo_shaken,
                  data_venc, por_conta, obs, nfi_sk, self._sk_edit_id))
+            self.conn.commit()
+            # Atualiza IS se CNF
+            if nfi_sk == "CNF" and valor:
+                self._upsert_is("custos_sk", "shaken_id",
+                                self._sk_edit_id, valor, data_reg)
         else:
             sk_num = self._next_sk_num()
             renovacao_de = getattr(self, "_sk_renovacao_de", None)
@@ -5975,29 +6396,13 @@ class KMCars(tk.Tk):
                 (sk_num, carro_id, cliente_id, valor, custo_shaken,
                  data_venc, por_conta, data_reg, obs, renovacao_de, nfi_sk))
             self._sk_renovacao_de = None
-            # IS automático para CNF (Shaken) → insere em custos_sk
+            # IS automático para CNF (Shaken) → upsert em custos_sk
             if nfi_sk == "CNF" and valor:
-                try:
-                    is_perc_sk = float(self.conn.execute(
-                        "SELECT valor FROM configuracoes WHERE chave='is_percentual'"
-                        ).fetchone()[0] or 10)
-                except Exception:
-                    is_perc_sk = 10.0
-                vv_sk = int(str(valor or "0").replace(",",""))
-                is_val_sk = int(vv_sk * is_perc_sk / 100)
-                if is_val_sk > 0:
-                    # Pega o ID do Shaken recém inserido
-                    sk_id_is = self.conn.execute(
-                        "SELECT id FROM shaken ORDER BY id DESC LIMIT 1").fetchone()
-                    if sk_id_is:
-                        self.conn.execute(
-                            "INSERT INTO custos_sk "
-                            "(shaken_id,tipo_custo,descricao,valor,data_custo) "
-                            "VALUES (?,?,?,?,?)",
-                            (sk_id_is[0], "IS",
-                             "IS automático CNF",
-                             str(is_val_sk), data_reg))
-                        self.conn.commit()
+                sk_id_is = self.conn.execute(
+                    "SELECT id FROM shaken ORDER BY id DESC LIMIT 1").fetchone()
+                if sk_id_is:
+                    self._upsert_is("custos_sk", "shaken_id",
+                                    sk_id_is[0], valor, data_reg)
 
         # Salva data_shaken no cadastro do carro
         self.conn.execute(
@@ -6966,10 +7371,13 @@ class KMCars(tk.Tk):
         scroll_f.pack(fill="both", expand=True, padx=14, pady=(0, 12))
         cv = tk.Canvas(scroll_f, bg=COLORS["bg_card"], highlightthickness=0)
         sb = tk.Scrollbar(scroll_f, orient="vertical", command=cv.yview)
+        sb_h = tk.Scrollbar(scroll_f, orient="horizontal", command=cv.xview)
         self._serv_rows_frame = tk.Frame(cv, bg=COLORS["bg_card"])
         self._serv_rows_frame.bind("<Configure>",
             lambda e: cv.configure(scrollregion=cv.bbox("all")))
         cv.create_window((0, 0), window=self._serv_rows_frame, anchor="nw")
+        cv.configure(xscrollcommand=sb_h.set)
+        sb_h.pack(side="bottom", fill="x")
         cv.configure(yscrollcommand=sb.set)
         cv.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
@@ -7016,23 +7424,97 @@ class KMCars(tk.Tk):
                      font=("Helvetica", 9, "bold"), bg=COLORS["bg_card"], fg=fg
                      ).pack(anchor="w", padx=18)
 
-        # Carro do tipo Cliente
-        lbl("Carro (Cliente)", required=True)
-        self._serv_carro_var = tk.StringVar(value="")
-        self._serv_carro_combo = ttk.Combobox(fcard, textvariable=self._serv_carro_var,
-                                               state="readonly", font=("Helvetica", 10), width=28)
-        self._serv_carro_combo.pack(padx=18, pady=(4, 12), ipady=4)
-        self._serv_carro_combo.bind("<ButtonPress>", lambda e: self._atualizar_combo_carros_servico())
-        self._serv_carro_combo.bind("<<ComboboxSelected>>", lambda e: self._serv_auto_cliente())
-
-        # Cliente
+        # Cliente (primeiro para filtrar carros)
+        # ── Cliente: busca + listbox ──────────────────────────────────────
         lbl("Cliente", required=True)
         self._serv_cliente_var = tk.StringVar(value="")
-        self._serv_cliente_combo = ttk.Combobox(fcard, textvariable=self._serv_cliente_var,
-                                                 state="readonly", font=("Helvetica", 10), width=28)
-        self._serv_cliente_combo.pack(padx=18, pady=(4, 12), ipady=4)
-        self._serv_cliente_combo.bind("<ButtonPress>",
-                                      lambda e: self._atualizar_combo_clientes_servico())
+        self._serv_cliente_id  = None
+        _sv_cli_filt = tk.StringVar()
+        tk.Entry(fcard, textvariable=_sv_cli_filt,
+                 font=("Helvetica",9), bg=COLORS["bg_main"],
+                 fg=COLORS["text_primary"],
+                 insertbackground=COLORS["text_primary"],
+                 relief="flat", bd=0,
+                 highlightthickness=1, highlightbackground=COLORS["border"],
+                 highlightcolor=COLORS["accent"]
+                 ).pack(fill="x", padx=18, pady=(4,0), ipady=5)
+        self._serv_cli_sel_lbl = tk.Label(fcard,
+            text="— nenhum —", font=("Helvetica",8,"bold"),
+            bg=COLORS["bg_card"], fg=COLORS["text_muted"])
+        self._serv_cli_sel_lbl.pack(anchor="w", padx=20, pady=(2,0))
+        _sv_cli_lb = tk.Listbox(fcard, font=("Helvetica",9), height=4,
+                                bg=COLORS["bg_main"], fg=COLORS["text_primary"],
+                                selectbackground=COLORS["accent"],
+                                selectforeground="white",
+                                relief="flat", bd=0, highlightthickness=1,
+                                highlightbackground=COLORS["border"])
+        _sv_cli_lb.pack(fill="x", padx=18, pady=(0,8))
+
+        def _sv_cli_fill(*_):
+            t = _sv_cli_filt.get().lower()
+            _sv_cli_lb.delete(0, "end")
+            for o in getattr(self, "_serv_cli_opts_all", []):
+                if not t or t in o.lower():
+                    _sv_cli_lb.insert("end", o)
+
+        def _sv_cli_pick(e):
+            sel = _sv_cli_lb.curselection()
+            if not sel: return
+            val = _sv_cli_lb.get(sel[0])
+            self._serv_cliente_var.set(val)
+            try: self._serv_cliente_id = int(val.split("—")[0].strip())
+            except: self._serv_cliente_id = None
+            name = val.split("—", 1)[1].strip() if "—" in val else val
+            self._serv_cli_sel_lbl.configure(text=f"✔ {name}", fg=COLORS["accent"])
+            self._atualizar_combo_carros_servico(filtro_cli_id=self._serv_cliente_id)
+
+        _sv_cli_filt.trace_add("write", _sv_cli_fill)
+        _sv_cli_lb.bind("<<ListboxSelect>>", _sv_cli_pick)
+        self._serv_cliente_combo = _sv_cli_lb   # alias para compatibilidade
+
+        # ── Carro: busca + listbox ────────────────────────────────────────
+        lbl("Carro (Cliente)", required=True)
+        self._serv_carro_var = tk.StringVar(value="")
+        _sv_car_filt = tk.StringVar()
+        tk.Entry(fcard, textvariable=_sv_car_filt,
+                 font=("Helvetica",9), bg=COLORS["bg_main"],
+                 fg=COLORS["text_primary"],
+                 insertbackground=COLORS["text_primary"],
+                 relief="flat", bd=0,
+                 highlightthickness=1, highlightbackground=COLORS["border"],
+                 highlightcolor=COLORS["accent"]
+                 ).pack(fill="x", padx=18, pady=(4,0), ipady=5)
+        self._serv_car_sel_lbl = tk.Label(fcard,
+            text="— nenhum —", font=("Helvetica",8,"bold"),
+            bg=COLORS["bg_card"], fg=COLORS["text_muted"])
+        self._serv_car_sel_lbl.pack(anchor="w", padx=20, pady=(2,0))
+        _sv_car_lb = tk.Listbox(fcard, font=("Helvetica",9), height=4,
+                                bg=COLORS["bg_main"], fg=COLORS["text_primary"],
+                                selectbackground=COLORS["blue"],
+                                selectforeground="white",
+                                relief="flat", bd=0, highlightthickness=1,
+                                highlightbackground=COLORS["border"])
+        _sv_car_lb.pack(fill="x", padx=18, pady=(0,8))
+
+        def _sv_car_fill(*_):
+            t = _sv_car_filt.get().lower()
+            _sv_car_lb.delete(0, "end")
+            for o in getattr(self, "_serv_carro_opts_all", []):
+                if not t or t in o.lower():
+                    _sv_car_lb.insert("end", o)
+
+        def _sv_car_pick(e):
+            sel = _sv_car_lb.curselection()
+            if not sel: return
+            val = _sv_car_lb.get(sel[0])
+            self._serv_carro_var.set(val)
+            name = val.split("|")[0].split("—",1)[-1].strip()
+            self._serv_car_sel_lbl.configure(text=f"✔ {name}", fg=COLORS["blue"])
+            self._serv_auto_cliente()
+
+        _sv_car_filt.trace_add("write", _sv_car_fill)
+        _sv_car_lb.bind("<<ListboxSelect>>", _sv_car_pick)
+        self._serv_carro_combo = _sv_car_lb   # alias para compatibilidade
 
         # Tipo de Serviço
         lbl("Tipo de Serviço", required=True)
@@ -7105,6 +7587,10 @@ class KMCars(tk.Tk):
                   relief="flat", cursor="hand2",
                   command=self._limpar_form_servico
                   ).pack(side="left", padx=(8, 0), ipady=7, ipadx=4)
+        tk.Button(btn_f, text="↺", font=("Helvetica", 10, "bold"),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  command=self._refresh_tabela_servicos
+                  ).pack(side="left", padx=(8, 0), ipady=7, ipadx=6)
 
         # Observações (caixa de texto, abaixo dos botões)
         tk.Frame(fcard, bg=COLORS["border"], height=1).pack(fill="x", padx=18, pady=(8, 8))
@@ -7119,6 +7605,16 @@ class KMCars(tk.Tk):
                                       width=28, height=5, wrap="word")
         self._serv_obs_text.pack(padx=18, pady=(4, 18), fill="x")
 
+        # Pré-carrega listas para filtro funcionar imediatamente
+        self._atualizar_combo_clientes_servico()
+        self._atualizar_combo_carros_servico()
+        # Popula listboxes iniciais
+        for o in getattr(self, "_serv_cli_opts_all", []):
+            if hasattr(self, "_serv_cliente_combo") and isinstance(self._serv_cliente_combo, tk.Listbox):
+                self._serv_cliente_combo.insert("end", o)
+        for o in getattr(self, "_serv_carro_opts_all", []):
+            if hasattr(self, "_serv_carro_combo") and isinstance(self._serv_carro_combo, tk.Listbox):
+                self._serv_carro_combo.insert("end", o)
         self._atualizar_os_num()
         self._refresh_tabela_servicos()
 
@@ -7127,19 +7623,53 @@ class KMCars(tk.Tk):
             num = self._next_os_num()
             self._lbl_os_num.configure(text=f"Próximo número: {num}")
 
-    def _atualizar_combo_carros_servico(self):
-        """Apenas carros com status 'Cliente'."""
-        carros = [dict(r) for r in self.conn.execute(
-            "SELECT * FROM carros WHERE status='Cliente' ORDER BY carro").fetchall()]
-        opts = [f"{c['id']} — {c['carro']} {c.get('ano') or ''} | {c.get('cor') or '—'} | {c.get('placa') or '—'}"
-                for c in carros]
-        self._serv_carro_combo["values"] = opts if opts else ["Nenhum carro do tipo Cliente"]
+    def _atualizar_combo_carros_servico(self, filtro_cli_id=None):
+        """Carros com status 'Cliente', opcionalmente filtrados por cliente."""
+        if filtro_cli_id:
+            carros = [dict(r) for r in self.conn.execute(
+                "SELECT * FROM carros WHERE status='Cliente' AND cliente_id=? ORDER BY carro",
+                (filtro_cli_id,)).fetchall()]
+        else:
+            carros = [dict(r) for r in self.conn.execute(
+                "SELECT * FROM carros WHERE status='Cliente' ORDER BY carro").fetchall()]
+        self._serv_carro_opts_all = [
+            f"{c['id']} — {c['carro']} {c.get('ano') or ''} | {c.get('cor') or '—'} | {c.get('placa') or '—'}"
+            for c in carros]
+        if hasattr(self, "_serv_carro_combo") and isinstance(self._serv_carro_combo, tk.Listbox):
+            self._serv_carro_combo.delete(0, "end")
+            for o in self._serv_carro_opts_all:
+                self._serv_carro_combo.insert("end", o)
+        elif hasattr(self, "_serv_carro_combo"):
+            self._serv_carro_combo["values"] = self._serv_carro_opts_all or ["Nenhum carro do tipo Cliente"]
 
     def _atualizar_combo_clientes_servico(self):
         clientes = [dict(r) for r in
                     self.conn.execute("SELECT * FROM clientes ORDER BY nome").fetchall()]
-        opts = [f"{c['id']} — {c['nome']}" for c in clientes]
-        self._serv_cliente_combo["values"] = opts if opts else ["Nenhum cliente cadastrado"]
+        self._serv_cli_opts_all = [f"{c['id']} — {c['nome']}" for c in clientes]
+        if hasattr(self, "_serv_cliente_combo") and isinstance(self._serv_cliente_combo, tk.Listbox):
+            self._serv_cliente_combo.delete(0, "end")
+            for o in self._serv_cli_opts_all:
+                self._serv_cliente_combo.insert("end", o)
+        elif hasattr(self, "_serv_cliente_combo"):
+            self._serv_cliente_combo["values"] = self._serv_cli_opts_all or ["Nenhum cliente cadastrado"]
+
+    def _serv_filtrar_clientes_substring(self):
+        pass  # filtering handled by Entry trace in _build_ordem_servico
+
+    def _serv_filtrar_carros_substring(self):
+        pass  # filtering handled by Entry trace in _build_ordem_servico
+
+    def _serv_filtrar_carros_por_cliente(self):
+        """Ao selecionar cliente, filtra carros vinculados a ele."""
+        sel = self._serv_cliente_var.get()
+        if not sel or "—" not in sel:
+            return
+        try:
+            cli_id = int(sel.split("—")[0].strip())
+        except Exception:
+            return
+        self._atualizar_combo_carros_servico(filtro_cli_id=cli_id)
+        self._serv_carro_var.set("")
 
     def _serv_auto_cliente(self):
         """Ao selecionar carro, preenche automaticamente o cliente vinculado."""
@@ -7198,6 +7728,10 @@ class KMCars(tk.Tk):
                 (carro_id, carro_txt, cliente_id, data_serv, tipo_serv,
                  desc, valor, status, obs, nfi_serv, self._serv_edit_id))
             self.conn.commit()
+            # Atualiza IS se CNF
+            if nfi_serv == "CNF" and valor:
+                self._upsert_is("custos_os", "servico_id",
+                                self._serv_edit_id, valor, data_serv)
             self._serv_edit_id = None
             self._lbl_serv_title.configure(text="⚙  Nova Ordem de Serviço")
             self._btn_salvar_serv.configure(text="  Registrar OS  ")
@@ -7212,29 +7746,13 @@ class KMCars(tk.Tk):
                 (os_num, carro_id, carro_txt, cliente_id, data_serv,
                  tipo_serv, desc, valor, status, obs, nfi_serv))
             self.conn.commit()
-            # IS automático para CNF (OS) → insere em custos_os
+            # IS automático para CNF (OS) → upsert em custos_os
             if nfi_serv == "CNF" and valor:
-                try:
-                    is_perc = float(self.conn.execute(
-                        "SELECT valor FROM configuracoes WHERE chave='is_percentual'"
-                        ).fetchone()[0] or 10)
-                except Exception:
-                    is_perc = 10.0
-                vv_os = int(str(valor or "0").replace(",",""))
-                is_val_os = int(vv_os * is_perc / 100)
-                if is_val_os > 0:
-                    # Pega o ID da OS recém inserida
-                    sid_is = self.conn.execute(
-                        "SELECT id FROM servicos ORDER BY id DESC LIMIT 1").fetchone()
-                    if sid_is:
-                        self.conn.execute(
-                            "INSERT INTO custos_os "
-                            "(servico_id,tipo_custo,descricao,valor,data_custo) "
-                            "VALUES (?,?,?,?,?)",
-                            (sid_is[0], "IS",
-                             "IS automático CNF",
-                             str(is_val_os), data_serv or ""))
-                        self.conn.commit()
+                sid_is = self.conn.execute(
+                    "SELECT id FROM servicos ORDER BY id DESC LIMIT 1").fetchone()
+                if sid_is:
+                    self._upsert_is("custos_os", "servico_id",
+                                    sid_is[0], valor, data_serv)
             self._lbl_serv_status.configure(text=f"✔ {os_num} registrada!", fg=COLORS["green"])
 
         self.servicos_data = [dict(r) for r in
@@ -7247,6 +7765,12 @@ class KMCars(tk.Tk):
         import datetime
         self._serv_carro_var.set("")
         self._serv_cliente_var.set("")
+        self._serv_cliente_id = None
+        if hasattr(self, "_serv_cli_sel_lbl"):
+            self._serv_cli_sel_lbl.configure(text="— nenhum selecionado —", fg=COLORS["text_muted"])
+        if hasattr(self, "_serv_car_sel_lbl"):
+            self._serv_car_sel_lbl.configure(text="— nenhum selecionado —", fg=COLORS["text_muted"])
+        self._atualizar_combo_carros_servico()
         self._serv_tipo_combo.set("")
         self._serv_desc_entry.delete(0, tk.END)
         self._serv_valor_entry.delete(0, tk.END)
@@ -8458,27 +8982,42 @@ class KMCars(tk.Tk):
             if ano == "—": ano = v.get("ano") or "—"
             if cor == "—": cor = v.get("cor") or "—"
 
-            # Valor de venda = preco_avista (sugerido à vista)
-            if v.get("preco_avista"):
+            # Valor de venda = preco_aprazo (sugerido a prazo)
+            preco_ref = v.get("preco_aprazo") or v.get("preco_avista")
+            if preco_ref:
                 try:
-                    val_str = f"¥ {int(str(v['preco_avista']).replace(',','')):,}"
+                    val_str = f"¥ {int(str(preco_ref).replace(',','')):,}"
                 except:
-                    val_str = str(v["preco_avista"])
+                    val_str = str(preco_ref)
             else:
                 val_str = "A consultar"
 
             rb_hex = "#F0F7FF" if i % 2 == 0 else "#FFFFFF"
             row_style = ParagraphStyle("r", parent=styles["Normal"],
                                        fontSize=9, textColor=DARK)
-            # Shaken do carro
-            sk_data_pdf = "—"
+            # Shaken do carro — "2 anos" se ausente ou vencido
+            import datetime as _pdf_dt
+            sk_data_pdf = "2 anos"
+            sk_color_pdf = rl_colors.HexColor("#9CA3AF")  # cinza padrão
             if v.get("carro_id"):
                 sk_r = self.conn.execute(
-                    "SELECT data_vencimento FROM shaken "
+                    "SELECT data_vencimento, por_conta FROM shaken "
                     "WHERE carro_id=? AND renovado=0 ORDER BY id DESC LIMIT 1",
                     (v["carro_id"],)).fetchone()
-                if sk_r and sk_r[0]:
-                    sk_data_pdf = sk_r[0]
+                if sk_r and sk_r[0] and not sk_r[1]:
+                    dv_str = sk_r[0]
+                    try:
+                        _d, _m, _a = dv_str.split("/")
+                        _dobj = _pdf_dt.date(int(_a), int(_m), int(_d))
+                        if _dobj >= _pdf_dt.date.today():
+                            sk_data_pdf  = dv_str
+                            sk_color_pdf = rl_colors.HexColor("#0369A1")
+                        else:
+                            sk_data_pdf  = "2 anos"
+                            sk_color_pdf = rl_colors.HexColor("#9CA3AF")
+                    except Exception:
+                        sk_data_pdf = dv_str
+                        sk_color_pdf = rl_colors.HexColor("#0369A1")
 
             data.append([
                 Paragraph(str(i+1), row_style),
@@ -8487,7 +9026,7 @@ class KMCars(tk.Tk):
                 Paragraph(str(cor), row_style),
                 Paragraph(sk_data_pdf,
                           ParagraphStyle("sk", parent=styles["Normal"],
-                                         fontSize=9, textColor=rl_colors.HexColor("#0369A1"))),
+                                         fontSize=9, textColor=sk_color_pdf)),
                 Paragraph(f"<b>{val_str}</b>",
                           ParagraphStyle("v", parent=styles["Normal"],
                                          fontSize=10, textColor=BLUE)),
@@ -12810,6 +13349,28 @@ class KMCars(tk.Tk):
                 tk.Label(col, text=val_t, font=("Helvetica",8,"bold"),
                          bg=COLORS["bg_content"], fg=fg_t).pack(anchor="w")
 
+        # ── Histórico de Inativação ──────────────────────────────────────
+        data_inat = carro.get("data_inativacao")
+        obs_inat  = carro.get("obs_inativacao")
+        if carro.get("status") == "Inativo" or data_inat:
+            section("⛔  Inativação", COLORS["red"])
+            row2("Status",        "INATIVO", COLORS["red"])
+            row2("Data Inativação", data_inat or "—", COLORS["red"])
+            if obs_inat:
+                tk.Frame(inner, bg=COLORS["bg_card"]).pack(fill="x", padx=20, pady=(2,0))
+                obs_f = tk.Frame(inner, bg=COLORS["bg_content"],
+                                 highlightthickness=1, highlightbackground=COLORS["border"])
+                obs_f.pack(fill="x", padx=20, pady=(4, 6))
+                tk.Label(obs_f, text="Motivo / Observação:",
+                         font=("Helvetica", 8, "bold"),
+                         bg=COLORS["bg_content"], fg=COLORS["text_secondary"]
+                         ).pack(anchor="w", padx=10, pady=(6,2))
+                tk.Label(obs_f, text=obs_inat,
+                         font=("Helvetica", 9),
+                         bg=COLORS["bg_content"], fg=COLORS["text_primary"],
+                         wraplength=480, justify="left"
+                         ).pack(anchor="w", padx=10, pady=(0,8))
+
         tk.Frame(inner, bg=COLORS["bg_card"], height=20).pack()
 
     def _dcar_exportar_pdf(self):
@@ -14685,15 +15246,29 @@ class KMCars(tk.Tk):
         self._df_cat_combo.bind("<ButtonPress>", lambda e: self._df_refresh_categorias())
         self._df_refresh_categorias()
 
-        lbl("M\u00eas de Refer\u00eancia (MM/AAAA)")
-        self._df_data_var = tk.StringVar()
-        tk.Entry(left, textvariable=self._df_data_var,
-                 font=("Helvetica",10), bg=COLORS["bg_main"],
-                 fg=COLORS["text_primary"],
-                 insertbackground=COLORS["text_primary"],
-                 relief="flat", bd=0,
-                 highlightthickness=1, highlightbackground=COLORS["border"]
-                 ).pack(fill="x", padx=16, pady=(4,10), ipady=6)
+        lbl("M\\u00eas de Refer\\u00eancia")
+        _df_ref_f = tk.Frame(left, bg=COLORS["bg_card"])
+        _df_ref_f.pack(fill="x", padx=16, pady=(4,10))
+        self._df_mes_var = tk.StringVar(value="03")
+        self._df_ano_var = tk.StringVar(value="2026")
+        _meses_opts = [f"{m:02d}" for m in range(1,13)]
+        _anos_opts  = [str(y) for y in range(2026+2, 2019, -1)]
+        ttk.Combobox(_df_ref_f, textvariable=self._df_mes_var,
+                     values=_meses_opts, state="readonly",
+                     font=("Helvetica",10), width=5
+                     ).pack(side="left", ipady=5)
+        tk.Label(_df_ref_f, text="/", font=("Helvetica",11,"bold"),
+                 bg=COLORS["bg_card"], fg=COLORS["text_secondary"]
+                 ).pack(side="left", padx=4)
+        ttk.Combobox(_df_ref_f, textvariable=self._df_ano_var,
+                     values=_anos_opts, state="readonly",
+                     font=("Helvetica",10), width=7
+                     ).pack(side="left", ipady=5)
+        self._df_data_var = tk.StringVar(value="03/2026")
+        def _sync_df_ref(*_):
+            self._df_data_var.set(f"{self._df_mes_var.get()}/{self._df_ano_var.get()}")
+        self._df_mes_var.trace_add("write", _sync_df_ref)
+        self._df_ano_var.trace_add("write", _sync_df_ref)
 
         self._df_rec_var = tk.IntVar(value=0)
         tk.Checkbutton(left, text="Recorrente (mensal)",
@@ -14765,18 +15340,14 @@ class KMCars(tk.Tk):
         self._df_filtro_mes.trace_add("write", lambda *_: self._df_refresh())
 
         # Header da tabela
-        DF_COLS = [
-            ("#", 30), ("Descri\u00e7\u00e3o", 150), ("Categoria", 90),
-            ("Ref", 75), ("Recorr.", 55), ("Valor", 80), ("A\u00e7\u00f5es", 55),
-        ]
-        self._df_cols = DF_COLS
         hdr_df = tk.Frame(right, bg=COLORS["bg_main"])
         hdr_df.pack(fill="x", padx=14)
-        for txt, w in DF_COLS:
+        for txt, w in [("#",4),("Descri\u00e7\u00e3o",24),("Categoria",14),
+                       ("Ref",10),("Rec.",6),("Valor",11),("A\u00e7\u00f5es",8)]:
             tk.Label(hdr_df, text=txt, font=("Helvetica",7,"bold"),
                      bg=COLORS["bg_main"], fg=COLORS["text_muted"],
-                     width=w//7, anchor="w"
-                     ).pack(side="left", padx=2, pady=3)
+                     width=w, anchor="w", padx=3
+                     ).pack(side="left", pady=3)
 
         # Área de scroll para as linhas
         tbl_outer = tk.Frame(right, bg=COLORS["bg_card"])
@@ -14796,14 +15367,14 @@ class KMCars(tk.Tk):
             lambda e: body_cv.configure(scrollregion=body_cv.bbox("all")))
         _df_win = body_cv.create_window((0,0), window=self._df_rows_frame, anchor="nw")
         body_cv.bind("<Configure>",
-            lambda e, w=_df_win: body_cv.itemconfig(w, width=e.width))
+            lambda e: body_cv.itemconfig(_df_win, width=e.width))
 
         body_cv.bind("<Enter>", lambda e: body_cv.bind_all(
             "<MouseWheel>",
             lambda ev: body_cv.yview_scroll(int(-1*(ev.delta/120)),"units")))
         body_cv.bind("<Leave>", lambda e: body_cv.unbind_all("<MouseWheel>"))
 
-        self.after(100, self._df_refresh)
+        self.after(300, self._df_refresh)
     def _df_refresh_categorias(self):
         """Recarrega categorias do BD no combo de Despesas Fixas."""
         try:
@@ -14868,28 +15439,24 @@ class KMCars(tk.Tk):
             self._df_total_lbl.configure(
                 text=f"{len(rows)} registro(s)  |  Total: ¥ {total:,}")
 
-        DF_COLS = getattr(self, "_df_cols", [])
         for i, r in enumerate(rows):
             rb = COLORS["bg_card"] if i % 2 == 0 else COLORS["bg_content"]
+            tk.Frame(self._df_rows_frame, bg=COLORS["border"], height=1).pack(fill="x")
             row_f = tk.Frame(self._df_rows_frame, bg=rb)
             row_f.pack(fill="x")
-            tk.Frame(self._df_rows_frame, bg=COLORS["border"], height=1).pack(fill="x")
-            vals = [
-                (str(r["id"]),                      30, COLORS["text_muted"]),
-                ((r.get("descricao") or "")[:20],  150, COLORS["text_primary"]),
-                ((r.get("categoria") or "")[:12],   90, COLORS["text_secondary"]),
-                ((r.get("data_ref") or "—")[:8],    75, COLORS["text_muted"]),
-                ("✓" if r.get("recorrente") else "—", 55, COLORS["green"]),
-                (self._fmt_yen_display(r.get("valor")), 80, COLORS["orange"]),
-            ]
-            for txt, w, fg in vals:
-                cell = tk.Frame(row_f, bg=rb, width=w)
-                cell.pack(side="left"); cell.pack_propagate(False)
-                tk.Label(cell, text=str(txt), font=("Helvetica",8),
-                         bg=rb, fg=fg, anchor="w", padx=4
-                         ).pack(fill="both", expand=True, pady=3)
-            af = tk.Frame(row_f, bg=rb, width=55)
-            af.pack(side="left"); af.pack_propagate(False)
+            for txt, w, fg in [
+                (str(r["id"]),                          4,  COLORS["text_muted"]),
+                ((r.get("descricao") or "")[:24],       24, COLORS["text_primary"]),
+                ((r.get("categoria") or "")[:14],       14, COLORS["text_secondary"]),
+                ((r.get("data_ref") or "—")[:9],        10, COLORS["text_muted"]),
+                ("✓" if r.get("recorrente") else "—",   6,  COLORS["green"]),
+                (self._fmt_yen_display(r.get("valor")), 11, COLORS["orange"]),
+            ]:
+                tk.Label(row_f, text=str(txt), font=("Helvetica",8),
+                         bg=rb, fg=fg, width=w, anchor="w", padx=3
+                         ).pack(side="left", pady=4)
+            af = tk.Frame(row_f, bg=rb)
+            af.pack(side="left", padx=2)
             def _editar_df(rid=r["id"], rdesc=r.get("descricao",""),
                            rval=r.get("valor",""), rcat=r.get("categoria","Geral"),
                            rref=r.get("data_ref",""), rrec=r.get("recorrente",0)):
@@ -14903,6 +15470,11 @@ class KMCars(tk.Tk):
                     self._df_valor_entry.insert(0, rval or "")
                 self._df_cat_var.set(rcat or "Geral")
                 self._df_data_var.set(rref or "")
+                if hasattr(self, "_df_mes_var") and rref and "/" in rref:
+                    parts = rref.split("/")
+                    if len(parts) == 2:
+                        self._df_mes_var.set(parts[0].strip())
+                        self._df_ano_var.set(parts[1].strip())
                 self._df_rec_var.set(rrec or 0)
             def _excluir_df(rid=r["id"]):
                 import tkinter.messagebox as _mb
@@ -15171,7 +15743,7 @@ class KMCars(tk.Tk):
         }
         STATUS_OPTS = ["Estoque", "Cliente", "Daisha", "Inativo"]
         self.carros_data = [dict(r) for r in
-                            self.conn.execute("SELECT * FROM carros ORDER BY id").fetchall()]
+                            self.conn.execute("SELECT * FROM carros ORDER BY id DESC").fetchall()]
 
         container = tk.Frame(parent, bg=COLORS["bg_content"])
         container.pack(fill="both", expand=True, padx=24, pady=20)
@@ -15306,28 +15878,39 @@ class KMCars(tk.Tk):
 
         tk.Frame(table_card, bg=COLORS["border"], height=1).pack(fill="x", padx=20)
 
-        col_f = tk.Frame(table_card, bg=COLORS["bg_main"])
-        col_f.pack(fill="x", padx=20)
+        # Container com scroll horizontal e vertical
+        tbl_outer = tk.Frame(table_card, bg=COLORS["bg_card"])
+        tbl_outer.pack(fill="both", expand=True, padx=20, pady=(0,14))
+
+        vsb_c = tk.Scrollbar(tbl_outer, orient="vertical")
+        hsb_c = tk.Scrollbar(tbl_outer, orient="horizontal")
+        vsb_c.pack(side="right", fill="y")
+        hsb_c.pack(side="bottom", fill="x")
+
+        canvas2 = tk.Canvas(tbl_outer, bg=COLORS["bg_card"], highlightthickness=0,
+                            yscrollcommand=vsb_c.set, xscrollcommand=hsb_c.set)
+        canvas2.pack(side="left", fill="both", expand=True)
+        vsb_c.configure(command=canvas2.yview)
+        hsb_c.configure(command=canvas2.xview)
+
+        # Frame interno com header + rows juntos (scroll em bloco)
+        inner_tbl = tk.Frame(canvas2, bg=COLORS["bg_card"])
+        canvas2.create_window((0,0), window=inner_tbl, anchor="nw")
+        inner_tbl.bind("<Configure>",
+            lambda e: canvas2.configure(scrollregion=canvas2.bbox("all")))
+
+        col_f = tk.Frame(inner_tbl, bg=COLORS["bg_main"])
+        col_f.pack(fill="x")
         for txt, w in [("#",4),("Carro",16),("Ano",5),("Cor",8),
-                       ("Placa",9),("Chassi",12),("Status",9),("Cliente",12),
+                       ("Placa",15),("Chassi",12),("Status",9),("Cliente",12),
                        ("T.Compra",10),("Comprado de",14),("T.Venda",16),("Vendido para",16),
                        ("Shaken",10),("St.SK",8),("Ações",8)]:
             tk.Label(col_f, text=txt, font=("Helvetica", 8, "bold"),
                      bg=COLORS["bg_main"], fg=COLORS["text_muted"],
                      width=w, anchor="w").pack(side="left", padx=3, pady=6)
 
-        scroll_f = tk.Frame(table_card, bg=COLORS["bg_card"])
-        scroll_f.pack(fill="both", expand=True, padx=20, pady=(0, 14))
-        canvas2 = tk.Canvas(scroll_f, bg=COLORS["bg_card"], highlightthickness=0)
-        sb2 = tk.Scrollbar(scroll_f, orient="vertical", command=canvas2.yview)
-        self.carros_rows_frame = tk.Frame(canvas2, bg=COLORS["bg_card"])
-        self.carros_rows_frame.bind(
-            "<Configure>",
-            lambda e: canvas2.configure(scrollregion=canvas2.bbox("all")))
-        canvas2.create_window((0, 0), window=self.carros_rows_frame, anchor="nw")
-        canvas2.configure(yscrollcommand=sb2.set)
-        canvas2.pack(side="left", fill="both", expand=True)
-        sb2.pack(side="right", fill="y")
+        self.carros_rows_frame = tk.Frame(inner_tbl, bg=COLORS["bg_card"])
+        self.carros_rows_frame.pack(fill="x")
 
         self._refresh_tabela_carros()
 
@@ -15434,7 +16017,7 @@ class KMCars(tk.Tk):
             self.lbl_carro_status.configure(text="✔ Carro cadastrado!", fg=COLORS["green"])
 
         self.carros_data = [dict(r) for r in
-                            self.conn.execute("SELECT * FROM carros ORDER BY id").fetchall()]
+                            self.conn.execute("SELECT * FROM carros ORDER BY id DESC").fetchall()]
         self._limpar_form_carro(clear_status=False)
         self._refresh_tabela_carros()
 
@@ -15568,7 +16151,7 @@ class KMCars(tk.Tk):
             self.conn.execute("DELETE FROM carros WHERE id=?", (cid,))
             self.conn.commit()
             self.carros_data = [dict(r) for r in
-                self.conn.execute("SELECT * FROM carros ORDER BY id").fetchall()]
+                self.conn.execute("SELECT * FROM carros ORDER BY id DESC").fetchall()]
             if self._carro_edit_id == cid:
                 self._limpar_form_carro()
             self._refresh_tabela_carros()
@@ -15602,7 +16185,7 @@ class KMCars(tk.Tk):
         # Busca carros com nome do cliente via JOIN
         rows = [dict(r) for r in self.conn.execute(
             "SELECT ca.*, cl.nome AS cliente_nome FROM carros ca "
-            "LEFT JOIN clientes cl ON ca.cliente_id = cl.id ORDER BY ca.id"
+            "LEFT JOIN clientes cl ON ca.cliente_id = cl.id ORDER BY ca.id DESC"
         ).fetchall()]
 
         # Inativo fora da listagem padrão
@@ -15626,7 +16209,7 @@ class KMCars(tk.Tk):
             row.pack(fill="x")
 
             for val, w in [(str(c["id"]), 4), (c["carro"] or "", 16), (c["ano"] or "", 5),
-                           (c["cor"] or "", 8), (c["placa"] or "", 9), (c["chassi"] or "", 12)]:
+                           (c["cor"] or "", 8), (c["placa"] or "", 15), (c["chassi"] or "", 12)]:
                 tk.Label(row, text=val, font=("Helvetica", 9),
                          bg=row_bg, fg=COLORS["text_primary"],
                          width=w, anchor="w").pack(side="left", padx=3, pady=7)
@@ -15694,7 +16277,101 @@ class KMCars(tk.Tk):
                       bg=COLORS["red"], fg="white", relief="flat", cursor="hand2",
                       padx=6, pady=2,
                       command=lambda cid=c["id"]: self._excluir_carro(cid)
+                      ).pack(side="left", padx=(0, 4))
+            is_inativo = c.get("status") == "Inativo"
+            tk.Button(acts, text="⛔ Inativar", font=("Helvetica", 7, "bold"),
+                      bg=COLORS["text_muted"] if is_inativo else "#7F1D1D",
+                      fg="white", relief="flat",
+                      cursor="arrow" if is_inativo else "hand2",
+                      padx=4, pady=2,
+                      state="disabled" if is_inativo else "normal",
+                      command=(lambda cid=c["id"]: self._inativar_carro(cid))
                       ).pack(side="left")
+
+    def _inativar_carro(self, cid):
+        """Abre popup para registrar observação de inativação e inativa o carro."""
+        import tkinter.messagebox as mb
+        import datetime as _dti
+
+        carro_row = self.conn.execute("SELECT carro, status FROM carros WHERE id=?", (cid,)).fetchone()
+        if not carro_row:
+            return
+        carro_nome, status_atual = carro_row
+        if status_atual == "Inativo":
+            mb.showinfo("Já Inativo", f"O carro {carro_nome} já está inativo.")
+            return
+
+        # Popup de confirmação com campo de observação
+        popup = tk.Toplevel(self)
+        popup.title("Inativar Veículo")
+        popup.configure(bg=COLORS["bg_card"])
+        popup.resizable(False, False)
+        popup.grab_set()
+
+        # Centraliza
+        popup.update_idletasks()
+        x = self.winfo_x() + self.winfo_width()//2 - 220
+        y = self.winfo_y() + self.winfo_height()//2 - 160
+        popup.geometry(f"440x320+{x}+{y}")
+
+        tk.Frame(popup, bg=COLORS["red"], height=4).pack(fill="x")
+        tk.Label(popup, text="⛔  Inativar Veículo",
+                 font=("Helvetica", 12, "bold"),
+                 bg=COLORS["bg_card"], fg=COLORS["red"]).pack(anchor="w", padx=20, pady=(14,4))
+        tk.Label(popup, text=f"Veículo: {carro_nome}",
+                 font=("Helvetica", 9), bg=COLORS["bg_card"],
+                 fg=COLORS["text_secondary"]).pack(anchor="w", padx=20)
+        tk.Frame(popup, bg=COLORS["border"], height=1).pack(fill="x", padx=20, pady=8)
+
+        tk.Label(popup, text="Motivo / Observação da inativação:",
+                 font=("Helvetica", 9, "bold"), bg=COLORS["bg_card"],
+                 fg=COLORS["text_secondary"]).pack(anchor="w", padx=20)
+        obs_text = tk.Text(popup, font=("Helvetica", 9), height=6,
+                           bg=COLORS["bg_main"], fg=COLORS["text_primary"],
+                           insertbackground=COLORS["text_primary"],
+                           relief="flat", bd=0,
+                           highlightthickness=1, highlightbackground=COLORS["border"])
+        obs_text.pack(fill="x", padx=20, pady=(4, 12), ipady=4)
+
+        status_lbl = tk.Label(popup, text="", font=("Helvetica", 8),
+                              bg=COLORS["bg_card"], fg=COLORS["red"])
+        status_lbl.pack(anchor="w", padx=20)
+
+        btn_f = tk.Frame(popup, bg=COLORS["bg_card"])
+        btn_f.pack(padx=20, pady=(0,16), fill="x")
+
+        def _confirmar():
+            obs = obs_text.get("1.0", tk.END).strip()
+            hoje_str = _dti.date.today().strftime("%d/%m/%Y")
+            # Garante coluna obs_inativacao existe
+            try:
+                self.conn.execute("ALTER TABLE carros ADD COLUMN obs_inativacao TEXT")
+                self.conn.commit()
+            except Exception:
+                pass
+            try:
+                self.conn.execute("ALTER TABLE carros ADD COLUMN data_inativacao TEXT")
+                self.conn.commit()
+            except Exception:
+                pass
+            self.conn.execute(
+                "UPDATE carros SET status='Inativo', obs_inativacao=?, data_inativacao=? WHERE id=?",
+                (obs or None, hoje_str, cid))
+            self.conn.commit()
+            # Recarrega dados
+            self.carros_data = [dict(r) for r in self.conn.execute(
+                "SELECT * FROM carros ORDER BY id DESC").fetchall()]
+            self._refresh_tabela_carros()
+            popup.destroy()
+
+        tk.Button(btn_f, text="  Confirmar Inativação  ",
+                  font=("Helvetica", 10, "bold"),
+                  bg=COLORS["red"], fg="white", relief="flat", cursor="hand2",
+                  command=_confirmar).pack(side="left", ipady=6, ipadx=4)
+        tk.Button(btn_f, text="Cancelar",
+                  font=("Helvetica", 9), bg=COLORS["border"],
+                  fg=COLORS["text_secondary"], relief="flat", cursor="hand2",
+                  command=popup.destroy).pack(side="left", padx=(10,0), ipady=6, ipadx=4)
 
     def _toggle_ordem_clientes(self):
         self._cliente_ordem_az.set(not self._cliente_ordem_az.get())
@@ -15896,6 +16573,10 @@ class KMCars(tk.Tk):
         tbl_h.pack(fill="x", padx=20, pady=(14, 4))
         tk.Label(tbl_h, text="▦  Custos Registrados", font=("Helvetica", 11, "bold"),
                  bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side="left")
+        tk.Button(tbl_h, text="↺ Atualizar", font=("Helvetica", 8),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  padx=8, pady=3, command=self._refresh_tabela_custos
+                  ).pack(side="right", padx=(8,0))
         self.lbl_total_custos = tk.Label(tbl_h, text="0 registros", font=("Helvetica", 8),
                                          bg=COLORS["bg_card"], fg=COLORS["text_muted"])
         self.lbl_total_custos.pack(side="right")
@@ -15954,7 +16635,7 @@ class KMCars(tk.Tk):
 
         col_f = tk.Frame(table_card, bg=COLORS["bg_main"])
         col_f.pack(fill="x", padx=20)
-        for txt, w in [("#",3),("Carro",16),("Cor",7),("Placa",8),
+        for txt, w in [("#",3),("Carro",16),("Cor",7),("Placa",12),
                        ("Tipo Custo",14),("Descrição",18),("Valor (¥)",11),("Ações",9)]:
             tk.Label(col_f, text=txt, font=("Helvetica", 8, "bold"),
                      bg=COLORS["bg_main"], fg=COLORS["text_muted"],
@@ -16711,6 +17392,10 @@ class KMCars(tk.Tk):
                   bg=COLORS["border"], fg=COLORS["text_secondary"],
                   relief="flat", cursor="hand2",
                   command=self._limpar_form_compra
+                  ).pack(side="left", padx=(8, 0), ipady=7, ipadx=6)
+        tk.Button(btn_f, text="↺", font=("Helvetica", 10, "bold"),
+                  bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
+                  command=self._refresh_tabela_compras
                   ).pack(side="left", padx=(8, 0), ipady=7, ipadx=6)
 
         # ── COLUNA DIREITA: sidebar de custos (pack ANTES do centro para reservar espaço) ──
